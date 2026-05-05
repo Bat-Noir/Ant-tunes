@@ -58,22 +58,6 @@ All media is fetched from third-party sources.
 
 ---
 
-## 🚀 Future Plans
-
-- SoundCloud integration
-- UI redesign (glassy theme)
-- Queue reordering
-- Album + artist metadata
-- In-app updater
-
----
-
-## 🤝 Contributing
-
-Pull requests are welcome. Feel free to fork and improve!
-
----
-
 ## ⭐ Support
 
 If you like this project, give it a star ⭐
