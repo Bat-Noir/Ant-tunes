@@ -11,8 +11,8 @@ android {
         applicationId = "com.ant.tunes"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 3
+        versionName = "3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -46,6 +46,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.3.1")
     implementation("androidx.media3:media3-ui:1.3.1")
     implementation("androidx.media3:media3-common:1.3.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
 
     // --- MEDIA3 SESSION (FOR SERVICE) ---
     implementation("androidx.media3:media3-session:1.3.1")

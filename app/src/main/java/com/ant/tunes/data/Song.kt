@@ -10,6 +10,7 @@ data class Song(
     // 🔥 NEW
     val duration: Long = 0L,
     val album: String = "",
+    val source: String = "saavn",
 
     // 🔥 OFFLINE
     val isDownloaded: Boolean = false,

@@ -345,7 +345,16 @@ object PlayerManager {
         _playlistFlow.value = songs
         currentIndex = index
 
-        val mediaItems = songs.map { MediaItem.fromUri(it.streamUrl) }
+        val mediaItems = songs.map { song ->
+            if (song.source == "gaana") {
+                MediaItem.Builder()
+                    .setUri(song.streamUrl)
+                    .setMimeType("application/x-mpegURL")
+                    .build()
+            } else {
+                MediaItem.fromUri(song.streamUrl)
+            }
+        }
 
         player?.setMediaItems(mediaItems)
         player?.prepare()
@@ -367,8 +376,15 @@ object PlayerManager {
         playlist = playlist + filtered
         _playlistFlow.value = playlist
 
-        val mediaItems = filtered.map {
-            MediaItem.fromUri(it.streamUrl)
+        val mediaItems = filtered.map { song ->
+            if (song.source == "gaana") {
+                MediaItem.Builder()
+                    .setUri(song.streamUrl)
+                    .setMimeType("application/x-mpegURL")
+                    .build()
+            } else {
+                MediaItem.fromUri(song.streamUrl)
+            }
         }
 
         player?.addMediaItems(mediaItems)
@@ -405,7 +421,14 @@ object PlayerManager {
             _playlistFlow.value = playlist
             currentIndex = 0
 
-            val mediaItem = MediaItem.fromUri(song.streamUrl)
+            val mediaItem = if (song.source == "gaana") {
+                MediaItem.Builder()
+                    .setUri(song.streamUrl)
+                    .setMimeType("application/x-mpegURL")
+                    .build()
+            } else {
+                MediaItem.fromUri(song.streamUrl)
+            }
 
             player?.setMediaItem(mediaItem)
             player?.prepare()
