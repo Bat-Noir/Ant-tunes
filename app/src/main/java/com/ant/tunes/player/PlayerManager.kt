@@ -377,13 +377,12 @@ object PlayerManager {
         _playlistFlow.value = playlist
 
         val mediaItems = filtered.map { song ->
-            if (song.source == "gaana") {
-                MediaItem.Builder()
+            when (song.source) {
+                "gaana" -> MediaItem.Builder()
                     .setUri(song.streamUrl)
                     .setMimeType("application/x-mpegURL")
                     .build()
-            } else {
-                MediaItem.fromUri(song.streamUrl)
+                else -> MediaItem.fromUri(song.streamUrl)
             }
         }
 

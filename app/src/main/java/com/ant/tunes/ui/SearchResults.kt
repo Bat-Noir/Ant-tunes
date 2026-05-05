@@ -132,14 +132,24 @@ fun SearchResults(
                                 Text(text = song.artist, color = Color.Gray)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 // 🔥 SOURCE BADGE
-                                Text(
-                                    text = song.source.uppercase(),
-                                    color = when (song.source) {
-                                        "gaana" -> Color(0xFFFF6B35)
-                                        else -> Color(0xFF1DB954)
-                                    },
-                                    style = MaterialTheme.typography.labelSmall
-                                )
+                                Box(
+                                    modifier = Modifier
+                                        .background(
+                                            color = when (song.source) {
+                                                "gaana" -> Color(0xFFFF6B35)
+                                                "youtube" -> Color(0xFFFF0000)
+                                                else -> Color(0xFF1DB954)
+                                            },
+                                            shape = RoundedCornerShape(4.dp)
+                                        )
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = song.source.uppercase(),
+                                        color = Color.White,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
                             }
                         }
                     }

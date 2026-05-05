@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import com.ant.tunes.NewPipeHelper
 
 class PlayerViewModel : ViewModel() {
 
@@ -38,15 +39,19 @@ class PlayerViewModel : ViewModel() {
     private val _combinedResults = mutableStateListOf<Song>()
     val combinedResults: List<Song> get() = _combinedResults
 
+    private val _youtubeResults = mutableStateListOf<Song>()
+    val youtubeResults: List<Song> get() = _youtubeResults
+
     private val _recommendedSongs = MutableStateFlow<List<Song>>(emptyList())
     val recommendedSongs: StateFlow<List<Song>> = _recommendedSongs
 
     private fun rebuildCombinedResults() {
         _combinedResults.clear()
-        val max = maxOf(_results.size, _gaanaResults.size)
+        val max = maxOf(_results.size, _gaanaResults.size, _youtubeResults.size)
         for (i in 0 until max) {
             if (i < _results.size) _combinedResults.add(_results[i])
             if (i < _gaanaResults.size) _combinedResults.add(_gaanaResults[i])
+            if (i < _youtubeResults.size) _combinedResults.add(_youtubeResults[i])
         }
     }
 
@@ -59,28 +64,36 @@ class PlayerViewModel : ViewModel() {
         _combinedResults.clear()
         loadMore(query)
         searchGaana(query)
+        searchYouTube(query)
     }
 
     fun searchGaana(query: String) {
         _gaanaResults.clear()
         viewModelScope.launch {
             try {
-                val response = RetrofitClient.gaanaApi.searchSongs(query)
+                val response = RetrofitClient.gaanaApi.searchSongs(
+                    query = query,
+                    type = "song",
+                    limit = 20
+                )
                 if (response.isSuccessful) {
                     val songs = response.body()?.results ?: emptyList()
                     val mappedSongs = kotlinx.coroutines.coroutineScope {
                         songs.map { gaanaSong ->
                             async {
                                 try {
-                                    val stream = RetrofitClient.gaanaApi
-                                        .getStreamUrl(gaanaSong.seokey)
-                                    val audioUrl = stream.body()?.audio_url
+                                    val songDetail = RetrofitClient.gaanaApi
+                                        .getSong(gaanaSong.seokey)
+                                    val body = songDetail.body()
+                                    val audioUrl = body?.audio_url
                                         ?: return@async null
+                                    if (body.status != true) return@async null
+
                                     Song(
                                         id = gaanaSong.id,
-                                        title = gaanaSong.title,
-                                        artist = gaanaSong.artist,
-                                        albumArt = gaanaSong.thumb,
+                                        title = body.title ?: gaanaSong.title,
+                                        artist = body.artist ?: gaanaSong.subtitle,
+                                        albumArt = body.thumb ?: gaanaSong.thumb,
                                         streamUrl = audioUrl,
                                         album = "Gaana",
                                         source = "gaana"
@@ -90,10 +103,40 @@ class PlayerViewModel : ViewModel() {
                                 }
                             }
                         }.awaitAll().filterNotNull()
+
+                            .filter { song ->
+                                song.title.contains(query, ignoreCase = true) ||
+                                        song.artist.contains(query, ignoreCase = true)
+                            }
+
                     }
                     _gaanaResults.addAll(mappedSongs)
                     rebuildCombinedResults()
                 }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun searchYouTube(query: String) {
+        _youtubeResults.clear()
+        viewModelScope.launch {
+            try {
+                val results = NewPipeHelper.search(query)
+                val mappedSongs = kotlinx.coroutines.coroutineScope {
+                    results.map { song ->
+                        async {
+                            try {
+                                val audioUrl = NewPipeHelper.getAudioUrl(song.streamUrl)
+                                    ?: return@async null
+                                song.copy(streamUrl = audioUrl)
+                            } catch (e: Exception) { null }
+                        }
+                    }.awaitAll().filterNotNull()
+                }
+                _youtubeResults.addAll(mappedSongs)
+                rebuildCombinedResults()
             } catch (e: Exception) {
                 e.printStackTrace()
             }

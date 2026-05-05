@@ -5,10 +5,19 @@ data class GaanaSearchResponse(
     val results: List<GaanaSong>
 )
 
+data class GaanaSongResponse(
+    val title: String?,
+    val artist: String?,
+    val audio_url: String?,
+    val thumb: String?,
+    val status: Boolean,
+    val duration: String? = ""
+)
+
 data class GaanaSong(
     val id: String,
     val title: String,
-    val artist: String,
+    val subtitle: String = "",
     val seokey: String,
     val thumb: String,
     val language: String = ""
