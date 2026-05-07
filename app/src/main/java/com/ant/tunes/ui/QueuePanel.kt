@@ -10,6 +10,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -19,110 +24,169 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import coil.compose.rememberAsyncImagePainter
+import com.ant.tunes.data.Song
 import com.ant.tunes.player.PlayerManager
+import com.ant.tunes.ui.theme.*
+import androidx.compose.runtime.getValue
+import com.ant.tunes.ui.RequestFullScreenPlayer
+
 
 @Composable
-fun QueuePanel() {
+fun QueuePanel(
+    isExpanded: Boolean = false,
+    onSongSelected: () -> Unit = {}
+) {
     val context = LocalContext.current
     val playlist by PlayerManager.playlistFlow.collectAsState()
     val downloadedSongs by PlayerManager.downloadedSongs.collectAsState()
     val currentSong by PlayerManager.currentSong.collectAsState()
     val isOffline by PlayerManager.isOfflineMode.collectAsState()
+    val accent = LocalAccentColor.current // 🟢 Dynamic Accent
 
-    // 🔥 SMART QUEUE SOURCE
     val displayList = if (isOffline) downloadedSongs else playlist
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 320.dp) // 🔥 slightly tighter
-            .background(
-                Color(0xFF1A1A1A),
-                RoundedCornerShape(20.dp)
-            )
+            // 🟢 FIXED: Solid dark background when expanded removes the transparency bleed
+            .background(if (isExpanded) Color(0xFF121212) else AntSurface1, RoundedCornerShape(20.dp))
             .padding(horizontal = 12.dp, vertical = 10.dp)
     ) {
-
         Text(
-            text = if (isOffline) "Offline Queue" else "Up Next",
-            color = Color.White.copy(alpha = 0.65f),
-            style = MaterialTheme.typography.titleMedium, // 👈 bigger
-            modifier = Modifier.padding(bottom = 8.dp)
+            text = if (isOffline) "OFFLINE QUEUE" else "UP NEXT",
+            style = MaterialTheme.typography.labelLarge,
+            color = AntText3,
+            modifier = Modifier.padding(bottom = 8.dp, start = 4.dp)
         )
 
-        LazyColumn {
+        if (displayList.isEmpty()) {
+            Text(
+                text = "No songs in queue",
+                style = MaterialTheme.typography.bodySmall,
+                color = AntText3,
+                modifier = Modifier.padding(12.dp)
+            )
+        } else {
+            if (isExpanded) {
+                // 🟢 FIXED: Infinite Scrolling for the Full Player Overlay
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    itemsIndexed(displayList) { index, song ->
+                        val isCurrent = currentSong?.id == song.id
+                        QueueItemRow(
+                            song = song,
+                            isCurrent = isCurrent,
+                            index = index,
+                            isLastItem = index == displayList.size - 1,
+                            isExpanded = true,
+                            accent = accent,
+                            onClick = {
+                                if (isOffline) PlayerManager.playStream(context, song)
+                                else PlayerManager.play(context, displayList, index)
 
-            // 🔥 EMPTY STATE
-            if (displayList.isEmpty()) {
-                item {
-                    Text(
-                        text = "No songs in queue",
-                        color = Color.Gray,
-                        modifier = Modifier.padding(12.dp)
-                    )
-                }
-            }
-
-            itemsIndexed(
-                items = displayList,
-                key = { index, song -> "${song.id}_${index}" }
-            ) { index, song ->
-
-                val isCurrent = currentSong?.id == song.id
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(
-                            indication = LocalIndication.current,
-                            interactionSource = remember { MutableInteractionSource() }
-                        ) {
-
-                            if (isOffline) {
-                                // 🔥 play from offline list
-                                PlayerManager.playStream(context, song)
-                            } else {
-                                // 🔥 play from online queue
-                                PlayerManager.seekToIndex(index)
-                            }
-                        }
-                        .background(
-                            if (isCurrent)
-                                Color.White.copy(alpha = 0.08f)
-                            else Color.Transparent,
-                            RoundedCornerShape(10.dp)
-                        )
-                        .padding(horizontal = 10.dp, vertical = 8.dp), // 🔥 reduced spacing
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-
-                    Image(
-                        painter = rememberAsyncImagePainter(song.albumArt),
-                        contentDescription = null,
-                        modifier = Modifier
-                            .size(38.dp) // 🔥 slightly smaller
-                            .clip(CircleShape)
-                    )
-
-                    Spacer(modifier = Modifier.width(10.dp))
-
-                    Column {
-
-                        Text(
-                            text = song.title,
-                            color = if (isCurrent) Color.White else Color.LightGray,
-                            maxLines = 1
-                        )
-
-                        Text(
-                            text = song.artist,
-                            color = Color.Gray,
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1
+                                RequestFullScreenPlayer = true // Instantly expands/ensures player is up
+                                onSongSelected() // 🟢 Instantly closes the queue overlay
+                            },
+                            onMoveUp = { PlayerManager.moveQueueItem(index, index - 1) },
+                            onMoveDown = { PlayerManager.moveQueueItem(index, index + 1) }
                         )
                     }
                 }
+            } else {
+                // 🟢 Standard static view (Max 5 items) to prevent crashing the HomeContent scrolling
+                displayList.take(5).forEachIndexed { index, song ->
+                    val isCurrent = currentSong?.id == song.id
+                    QueueItemRow(
+                        song = song,
+                        isCurrent = isCurrent,
+                        index = index,
+                        isLastItem = false,
+                        isExpanded = false,
+                        accent = accent,
+                        onClick = {
+                            if (isOffline) PlayerManager.playStream(context, song)
+                            else PlayerManager.seekToIndex(index)
+
+                            RequestFullScreenPlayer = true
+                        },
+                        onMoveUp = {},
+                        onMoveDown = {}
+                    )
+                }
+                if (displayList.size > 5) {
+                    Text(
+                        text = "+ ${displayList.size - 5} MORE",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AntText3,
+                        modifier = Modifier.padding(start = 10.dp, top = 8.dp, bottom = 4.dp)
+                    )
+                }
             }
+        }
+    }
+}
+
+@Composable
+fun QueueItemRow(
+    song: Song,
+    isCurrent: Boolean,
+    index: Int,
+    isLastItem: Boolean,
+    isExpanded: Boolean,
+    accent: Color,
+    onClick: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                indication = LocalIndication.current,
+                interactionSource = remember { MutableInteractionSource() },
+                onClick = onClick
+            )
+            .background(
+                if (isCurrent) accent.copy(alpha = 0.15f) else Color.Transparent,
+                RoundedCornerShape(10.dp)
+            )
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Image(
+            painter = rememberAsyncImagePainter(song.albumArt),
+            contentDescription = null,
+            modifier = Modifier.size(38.dp).clip(RoundedCornerShape(8.dp))
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = song.title,
+                style = MaterialTheme.typography.titleSmall,
+                color = if (isCurrent) accent else AntText,
+                maxLines = 1
+            )
+            Text(
+                text = song.artist,
+                style = MaterialTheme.typography.bodySmall,
+                color = AntText3,
+                maxLines = 1
+            )
+        }
+
+        // 🟢 FIXED: Reordering buttons (Only visible in expanded queue)
+        if (isExpanded) {
+            if (index > 0) {
+                IconButton(onClick = onMoveUp, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Default.ArrowUpward, null, tint = AntText3, modifier = Modifier.size(18.dp))
+                }
+            }
+            if (!isLastItem) {
+                IconButton(onClick = onMoveDown, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Default.ArrowDownward, null, tint = AntText3, modifier = Modifier.size(18.dp))
+                }
+            }
+        } else if (isCurrent) {
+            Box(modifier = Modifier.size(6.dp).background(accent, CircleShape))
         }
     }
 }

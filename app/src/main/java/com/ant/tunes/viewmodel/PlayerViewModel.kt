@@ -8,12 +8,18 @@ import androidx.lifecycle.viewModelScope
 import com.ant.tunes.data.Song
 import com.ant.tunes.network.RetrofitClient
 import com.ant.tunes.player.PlayerManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
 import com.ant.tunes.NewPipeHelper
 
 class PlayerViewModel : ViewModel() {
@@ -45,6 +51,119 @@ class PlayerViewModel : ViewModel() {
     private val _recommendedSongs = MutableStateFlow<List<Song>>(emptyList())
     val recommendedSongs: StateFlow<List<Song>> = _recommendedSongs
 
+    private val _albumTracks = mutableStateListOf<Song>()
+    val albumTracks: List<Song> get() = _albumTracks
+
+    val isAlbumLoading = mutableStateOf(false)
+    val isPlayerExpanded = mutableStateOf(false)
+
+    // 🟢 NEW: LYRICS STATES
+    val currentLyrics = mutableStateOf<String?>(null)
+    val isLyricsLoading = mutableStateOf(false)
+
+    // 🟢 THE ANTI-JUNK BOUNCER
+    private fun isJunk(title: String, seedSong: Song): Boolean {
+        val junkRegex = Regex("(?i)(slowed|reverb|8d|cover|karaoke|instrumental|mashup|remix\\b(?!official)|bass\\s*boosted|ringtone|shorts)")
+        if (junkRegex.containsMatchIn(title)) return true
+
+        val liveRegex = Regex("(?i)(live|concert|performance)")
+        val seedIsLive = liveRegex.containsMatchIn(seedSong.title)
+        if (!seedIsLive && liveRegex.containsMatchIn(title)) return true
+
+        return false
+    }
+
+    // 🟢 LRCLIB UNIVERSAL LYRICS FETCHER
+    private fun fetchLyrics(song: Song?) {
+        if (song == null) {
+            currentLyrics.value = null
+            return
+        }
+
+        // Clean up title/artist so API finds matches easier (removes brackets like [Official Music Video])
+        val cleanTitle = song.title.replace(Regex("\\[.*?\\]|\\(.*?\\)"), "").trim()
+        val cleanArtist = song.artist.split(",").firstOrNull()?.trim() ?: song.artist
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                isLyricsLoading.value = true
+                currentLyrics.value = null
+
+                val urlStr = "https://lrclib.net/api/get?track_name=${URLEncoder.encode(cleanTitle, "UTF-8")}&artist_name=${URLEncoder.encode(cleanArtist, "UTF-8")}"
+                val url = URL(urlStr)
+                val connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.setRequestProperty("User-Agent", "AntTunes/1.0 (Android)")
+                connection.connectTimeout = 5000
+                connection.readTimeout = 5000
+
+                if (connection.responseCode == 200) {
+                    val response = connection.inputStream.bufferedReader().use { it.readText() }
+                    val json = JSONObject(response)
+                    val plainLyrics = json.optString("plainLyrics", "")
+
+                    withContext(Dispatchers.Main) {
+                        if (plainLyrics.isNotBlank()) {
+                            currentLyrics.value = plainLyrics
+                        } else {
+                            currentLyrics.value = "No lyrics found for this track."
+                        }
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        currentLyrics.value = "No lyrics found for this track."
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    currentLyrics.value = "Error fetching lyrics. Check connection."
+                }
+            } finally {
+                withContext(Dispatchers.Main) {
+                    isLyricsLoading.value = false
+                }
+            }
+        }
+    }
+
+    fun loadBrowseCategory(categoryName: String) {
+        viewModelScope.launch {
+            try {
+                isAlbumLoading.value = true
+                _albumTracks.clear()
+
+                val response = RetrofitClient.api.searchSongs(
+                    query = categoryName,
+                    page = 1,
+                    limit = 30
+                )
+
+                if (response.isSuccessful) {
+                    val apiSongs = response.body()?.data?.results ?: emptyList()
+                    val newSongs = apiSongs.mapNotNull {
+                        val url = it.downloadUrl.lastOrNull()?.url ?: return@mapNotNull null
+                        Song(
+                            id = it.id,
+                            title = it.name,
+                            artist = it.artists.primary.firstOrNull()?.name ?: "Unknown",
+                            albumArt = it.image.lastOrNull()?.url ?: "",
+                            streamUrl = url,
+                            duration = 0L,
+                            album = categoryName,
+                            source = "saavn"
+                        )
+                    }
+                    _albumTracks.addAll(newSongs)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                isAlbumLoading.value = false
+            }
+        }
+    }
+
     private fun rebuildCombinedResults() {
         _combinedResults.clear()
         val max = maxOf(_results.size, _gaanaResults.size, _youtubeResults.size)
@@ -71,22 +190,16 @@ class PlayerViewModel : ViewModel() {
         _gaanaResults.clear()
         viewModelScope.launch {
             try {
-                val response = RetrofitClient.gaanaApi.searchSongs(
-                    query = query,
-                    type = "song",
-                    limit = 20
-                )
+                val response = RetrofitClient.gaanaApi.searchSongs(query = query, type = "song", limit = 20)
                 if (response.isSuccessful) {
                     val songs = response.body()?.results ?: emptyList()
                     val mappedSongs = kotlinx.coroutines.coroutineScope {
                         songs.map { gaanaSong ->
                             async {
                                 try {
-                                    val songDetail = RetrofitClient.gaanaApi
-                                        .getSong(gaanaSong.seokey)
+                                    val songDetail = RetrofitClient.gaanaApi.getSong(gaanaSong.seokey)
                                     val body = songDetail.body()
-                                    val audioUrl = body?.audio_url
-                                        ?: return@async null
+                                    val audioUrl = body?.audio_url ?: return@async null
                                     if (body.status != true) return@async null
 
                                     Song(
@@ -98,24 +211,16 @@ class PlayerViewModel : ViewModel() {
                                         album = "Gaana",
                                         source = "gaana"
                                     )
-                                } catch (e: Exception) {
-                                    null
-                                }
+                                } catch (e: Exception) { null }
                             }
-                        }.awaitAll().filterNotNull()
-
-                            .filter { song ->
-                                song.title.contains(query, ignoreCase = true) ||
-                                        song.artist.contains(query, ignoreCase = true)
-                            }
-
+                        }.awaitAll().filterNotNull().filter { song ->
+                            song.title.contains(query, ignoreCase = true) || song.artist.contains(query, ignoreCase = true)
+                        }
                     }
                     _gaanaResults.addAll(mappedSongs)
                     rebuildCombinedResults()
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            } catch (e: Exception) { e.printStackTrace() }
         }
     }
 
@@ -128,8 +233,7 @@ class PlayerViewModel : ViewModel() {
                     results.map { song ->
                         async {
                             try {
-                                val audioUrl = NewPipeHelper.getAudioUrl(song.streamUrl)
-                                    ?: return@async null
+                                val audioUrl = NewPipeHelper.getAudioUrl(song.streamUrl) ?: return@async null
                                 song.copy(streamUrl = audioUrl)
                             } catch (e: Exception) { null }
                         }
@@ -137,9 +241,7 @@ class PlayerViewModel : ViewModel() {
                 }
                 _youtubeResults.addAll(mappedSongs)
                 rebuildCombinedResults()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            } catch (e: Exception) { e.printStackTrace() }
         }
     }
 
@@ -148,16 +250,11 @@ class PlayerViewModel : ViewModel() {
         searchJob = viewModelScope.launch {
             try {
                 _isSearching.value = true
-                val response = RetrofitClient.api.searchSongs(
-                    query = query,
-                    page = searchPage,
-                    limit = 10
-                )
+                val response = RetrofitClient.api.searchSongs(query = query, page = searchPage, limit = 10)
                 if (response.isSuccessful) {
                     val apiSongs = response.body()?.data?.results ?: emptyList()
                     val newSongs = apiSongs.mapNotNull {
-                        val url = it.downloadUrl.lastOrNull()?.url
-                            ?: return@mapNotNull null
+                        val url = it.downloadUrl.lastOrNull()?.url ?: return@mapNotNull null
                         Song(
                             id = it.id,
                             title = it.name,
@@ -170,58 +267,44 @@ class PlayerViewModel : ViewModel() {
                     }
                     _results.addAll(newSongs)
                     rebuildCombinedResults()
-                    if (newSongs.isEmpty()) searchHasMore = false
-                    else searchPage++
+                    if (newSongs.isEmpty()) searchHasMore = false else searchPage++
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            } finally {
-                _isSearching.value = false
-            }
+            } catch (e: Exception) { e.printStackTrace() } finally { _isSearching.value = false }
         }
     }
 
-    fun loadRecommendations(artist: String) {
+    // 🟢 DYNAMIC RECOMMENDATION QUEUE ENGINE
+    fun loadMoreRecommendations(seedSong: Song) {
         if (isLoadingRecommendations) return
-        recPage = 1
-        recHasMore = true
-        _recommendedSongs.value = emptyList()
-        loadMoreRecommendations(artist)
-    }
-
-    fun loadMoreRecommendations(artist: String) {
-        if (isLoadingRecommendations || !recHasMore) return
         viewModelScope.launch {
             try {
                 isLoadingRecommendations = true
-                val response = RetrofitClient.api.searchSongs(
-                    query = artist,
-                    page = recPage,
-                    limit = 10
-                )
+                val artistToSearch = seedSong.artist.split(",").firstOrNull()?.trim() ?: seedSong.artist
+
+                val response = RetrofitClient.api.searchSongs(query = artistToSearch, page = recPage, limit = 30)
+
                 if (response.isSuccessful) {
                     val results = response.body()?.data?.results ?: emptyList()
                     val newSongs = results
-                        .filter {
-                            it.artists.primary.any { a ->
-                                a.name.contains(artist, true)
-                            }
-                        }
-                        .mapNotNull {
-                            val url = it.downloadUrl.lastOrNull()?.url
-                                ?: return@mapNotNull null
+                        .mapNotNull { it ->
+                            val url = it.downloadUrl.lastOrNull()?.url ?: return@mapNotNull null
                             Song(
                                 id = it.id,
                                 title = it.name,
                                 artist = it.artists.primary.firstOrNull()?.name ?: "Unknown",
                                 albumArt = it.image.lastOrNull()?.url ?: "",
-                                streamUrl = url
+                                streamUrl = url,
+                                source = "saavn"
                             )
                         }
-                    _recommendedSongs.value = _recommendedSongs.value + newSongs
-                    PlayerManager.addToQueue(newSongs)
-                    if (newSongs.isEmpty()) recHasMore = false
-                    else recPage++
+                        .filter { !isJunk(it.title, seedSong) }
+
+                    if (newSongs.isNotEmpty()) {
+                        val combined = (_recommendedSongs.value + newSongs).distinctBy { it.id }
+                        _recommendedSongs.value = combined
+                        PlayerManager.addToQueue(newSongs)
+                        recPage++
+                    }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -232,8 +315,15 @@ class PlayerViewModel : ViewModel() {
     }
 
     init {
-        PlayerManager.onNeedMoreSongs = { artist ->
-            loadMoreRecommendations(artist)
+        PlayerManager.onNeedMoreSongs = { seedSong ->
+            loadMoreRecommendations(seedSong)
+        }
+
+        // 🟢 AUTO-FETCH LYRICS: Observes song changes and fetches lyrics silently
+        viewModelScope.launch {
+            PlayerManager.currentSong.collect { song ->
+                fetchLyrics(song)
+            }
         }
     }
 }

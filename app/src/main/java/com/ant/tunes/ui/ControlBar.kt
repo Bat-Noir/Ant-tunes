@@ -1,133 +1,330 @@
 package com.ant.tunes.ui
 
 import android.content.Context
+import android.media.AudioManager
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ant.tunes.player.PlayerManager
 import com.ant.tunes.data.DownloadState
+import com.ant.tunes.ui.theme.*
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ControlBar(
     context: Context,
-    onDownload: () -> Unit = {},
+    title: String,
+    artist: String,
+    album: String,
     onPrev: () -> Unit = {},
     onPlayPause: () -> Unit = {},
     onNext: () -> Unit = {},
-    onRepeat: () -> Unit = {},
-    isPlaying: Boolean = false
+    onOpenQueue: () -> Unit = {},
+    isPlaying: Boolean = false,
+    // PATCH 2 — new params
+    isLiked: Boolean = false,
+    onToggleLike: () -> Unit = {}
 ) {
+    val accent = LocalAccentColor.current
 
     val currentSong by PlayerManager.currentSong.collectAsState()
     val repeatMode by PlayerManager.repeatMode.collectAsState()
-    val songId = currentSong?.id
+    val position by PlayerManager.currentPosition.collectAsState()
+    val duration by PlayerManager.duration.collectAsState()
+    val isPlayingState by PlayerManager.isPlayingFlow.collectAsState()
 
-    val downloadState = if (songId != null) {
-        PlayerManager.downloadStates[songId] ?: DownloadState.NOT_DOWNLOADED
-    } else DownloadState.NOT_DOWNLOADED
+    var isShuffle by remember { mutableStateOf(false) }
 
-    val progress = if (songId != null) {
-        PlayerManager.downloadProgress[songId] ?: 0f
-    } else 0f
+    // PATCH 2 — removed local isLiked state, now driven by param
+    val safePosition = position.coerceAtLeast(0L)
+    val safeDuration = duration.coerceAtLeast(0L)
+    val actualProgress = if (safeDuration > 0) safePosition.toFloat() / safeDuration else 0f
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 32.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
+    var sliderPosition by remember { mutableFloatStateOf(0f) }
+    var isDragging by remember { mutableStateOf(false) }
 
-        // 🔥 DOWNLOAD BUTTON (SMART)
-        Box(
-            modifier = Modifier.size(40.dp),
-            contentAlignment = Alignment.Center
-        ) {
+    LaunchedEffect(actualProgress) {
+        if (!isDragging) sliderPosition = actualProgress
+    }
 
-            when (downloadState) {
+    val audioManager = remember {
+        context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    }
+    val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).toFloat()
+    var currentVolume by remember {
+        mutableFloatStateOf(
+            audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
+        )
+    }
 
-                DownloadState.NOT_DOWNLOADED -> {
-                    Icon(
-                        imageVector = Icons.Default.Download,
-                        contentDescription = "Download",
-                        tint = Color.White,
-                        modifier = Modifier
-                            .size(24.dp)
-                            .clickable {
-                                currentSong?.let {
-                                    PlayerManager.downloadSong(context, it)
-                                }
-                            }
-                    )
-                }
-
-                DownloadState.DOWNLOADING -> {
-                    CircularProgressIndicator(
-                        progress = progress,
-                        color = Color.White,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-
-                DownloadState.DOWNLOADED -> {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = "Downloaded",
-                        tint = Color.Green,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
+    var thumbRotation by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(isPlayingState) {
+        if (isPlayingState) {
+            var lastFrameTime = withFrameNanos { it }
+            while (true) {
+                val currentFrameTime = withFrameNanos { it }
+                val deltaMs = (currentFrameTime - lastFrameTime) / 1_000_000f
+                lastFrameTime = currentFrameTime
+                thumbRotation = (thumbRotation + (deltaMs * 360f / 1500f)) % 360f
             }
         }
+    }
 
-        IconButton(onClick = onPrev) {
-            Icon(Icons.Default.SkipPrevious, null, tint = Color.White)
-        }
+    val artistAlbumText = if (
+        album.isNotBlank() &&
+        album != "Unknown Album" &&
+        album != "Unknown"
+    ) "$artist • $album" else artist
 
-        Box(
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+    ) {
+
+        // ── 1. TITLE ──
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleLarge,
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
             modifier = Modifier
-                .size(72.dp)
-                .background(Color.White, CircleShape),
-            contentAlignment = Alignment.Center
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // ── 2. SHUFFLE / ARTIST+ALBUM / LIKE ──
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onPlayPause) {
+            IconButton(
+                onClick = { isShuffle = !isShuffle },
+                modifier = Modifier.size(50.dp)
+            ) {
                 Icon(
-                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = "Play",
-                    tint = Color.Black,
-                    modifier = Modifier.size(36.dp)
+                    Icons.Default.Shuffle, "Shuffle",
+                    tint = if (isShuffle) accent else Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            Text(
+                text = artistAlbumText,
+                style = MaterialTheme.typography.labelLarge,
+                color = Color.White.copy(alpha = 0.7f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 8.dp)
+            )
+
+            // PATCH 2 — wired to isLiked param + onToggleLike callback
+            IconButton(
+                onClick = { onToggleLike() },
+                modifier = Modifier.size(50.dp)
+            ) {
+                Icon(
+                    imageVector = if (isLiked) Icons.Default.Favorite
+                    else Icons.Default.FavoriteBorder,
+                    contentDescription = "Like",
+                    tint = if (isLiked) Color.Red else Color.White,
+                    modifier = Modifier.size(24.dp)
                 )
             }
         }
 
-        IconButton(onClick = onNext) {
-            Icon(Icons.Default.SkipNext, null, tint = Color.White)
-        }
+        Spacer(modifier = Modifier.height(12.dp))
 
-        IconButton(onClick = { PlayerManager.toggleRepeat() }) {
-            Icon(
-                imageVector = when (repeatMode) {
-                    PlayerManager.RepeatMode.ONE -> Icons.Default.RepeatOne
-                    else -> Icons.Default.Repeat
+        // ── 3. SEEK BAR ──
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+        ) {
+            Slider(
+                value = sliderPosition,
+                onValueChange = {
+                    isDragging = true
+                    sliderPosition = it
                 },
-                contentDescription = "Repeat",
-                tint = when (repeatMode) {
-                    PlayerManager.RepeatMode.OFF -> Color.Gray
-                    else -> Color.Green
+                onValueChangeFinished = {
+                    isDragging = false
+                    PlayerManager.seekTo((sliderPosition * safeDuration).toLong())
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(30.dp),
+                colors = SliderDefaults.colors(
+                    thumbColor = Color.Transparent,
+                    activeTrackColor = accent,
+                    inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                ),
+                thumb = {
+                    Box(
+                        modifier = Modifier
+                            .size(15.dp)
+                            .graphicsLayer { rotationZ = thumbRotation }
+                            .background(accent, RoundedCornerShape(3.dp))
+                    )
                 }
             )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                val displayTime = if (isDragging) {
+                    (sliderPosition * safeDuration).toLong()
+                } else safePosition
+                Text(formatTime(displayTime),
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall)
+                Text(formatTime(safeDuration),
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // ── 4. MAIN CONTROLS ──
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val downloadState = PlayerManager.downloadStates[currentSong?.id]
+                ?: DownloadState.NOT_DOWNLOADED
+
+            IconButton(
+                onClick = { currentSong?.let { PlayerManager.downloadSong(context, it) } },
+                modifier = Modifier.size(50.dp)
+            ) {
+                Icon(
+                    imageVector = if (downloadState == DownloadState.DOWNLOADED)
+                        Icons.Default.Check else Icons.Default.Download,
+                    contentDescription = "Download",
+                    tint = if (downloadState == DownloadState.DOWNLOADED) accent
+                    else Color.White,
+                    modifier = Modifier.size(26.dp)
+                )
+            }
+
+            IconButton(onClick = onPrev, modifier = Modifier.size(58.dp)) {
+                Icon(Icons.Default.SkipPrevious, null,
+                    tint = Color.White, modifier = Modifier.size(34.dp))
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(66.dp)
+                    .background(accent, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                IconButton(
+                    onClick = onPlayPause,
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    Icon(
+                        imageVector = if (isPlayingState) Icons.Default.Pause
+                        else Icons.Default.PlayArrow,
+                        contentDescription = "Play/Pause",
+                        tint = AntBlack,
+                        modifier = Modifier.size(34.dp)
+                    )
+                }
+            }
+
+            IconButton(onClick = onNext, modifier = Modifier.size(58.dp)) {
+                Icon(Icons.Default.SkipNext, null,
+                    tint = Color.White, modifier = Modifier.size(34.dp))
+            }
+
+            IconButton(
+                onClick = { PlayerManager.toggleRepeat() },
+                modifier = Modifier.size(50.dp)
+            ) {
+                Icon(
+                    imageVector = when (repeatMode) {
+                        PlayerManager.RepeatMode.ONE -> Icons.Default.RepeatOne
+                        else -> Icons.Default.Repeat
+                    },
+                    contentDescription = "Repeat",
+                    tint = if (repeatMode == PlayerManager.RepeatMode.OFF) Color.White
+                    else accent,
+                    modifier = Modifier.size(26.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // ── 5. VOLUME & QUEUE ──
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.VolumeUp, null,
+                tint = Color.White, modifier = Modifier.size(22.dp))
+            Spacer(modifier = Modifier.width(12.dp))
+            Slider(
+                value = currentVolume,
+                onValueChange = {
+                    currentVolume = it
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, it.toInt(), 0)
+                },
+                valueRange = 0f..maxVolume,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(24.dp),
+                colors = SliderDefaults.colors(
+                    activeTrackColor = Color.White,
+                    inactiveTrackColor = Color.White.copy(alpha = 0.3f),
+                    thumbColor = Color.White
+                )
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            IconButton(
+                onClick = onOpenQueue,
+                modifier = Modifier.size(50.dp)
+            ) {
+                Icon(Icons.Default.QueueMusic, "Open Queue",
+                    tint = Color.White, modifier = Modifier.size(26.dp))
+            }
         }
     }
+}
+
+fun formatTime(ms: Long): String {
+    val totalSeconds = ms / 1000
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return "%d:%02d".format(minutes, seconds)
 }

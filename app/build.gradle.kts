@@ -11,8 +11,8 @@ android {
         applicationId = "com.ant.tunes"
         minSdk = 24
         targetSdk = 36
-        versionCode = 2
-        versionName = "2.0"
+        versionCode = 3
+        versionName = "3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -79,6 +79,7 @@ dependencies {
 
     // --- COROUTINES ---
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation(libs.androidx.compose.foundation)
 
     // --- TESTING ---
     testImplementation(libs.junit)
