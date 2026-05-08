@@ -90,6 +90,45 @@ object NewPipeHelper {
         }
     }
 
+    suspend fun searchNextPage(query: String, offset: Int): List<Song> =
+        withContext(Dispatchers.IO) {
+            try {
+                init()
+                val extractor = ServiceList.YouTube.getSearchExtractor(
+                    query,
+                    listOf(YoutubeSearchQueryHandlerFactory.VIDEOS),
+                    ""
+                )
+                extractor.fetchPage()
+
+                // get next page if available
+                val nextPage = extractor.initialPage.nextPage
+                if (nextPage != null) {
+                    val nextPageResult = extractor.getPage(nextPage)
+                    nextPageResult.items
+                        .filterIsInstance<StreamInfoItem>()
+                        .drop(offset.coerceAtLeast(0))
+                        .take(10)
+                        .mapNotNull { item ->
+                            try {
+                                Song(
+                                    id = item.url,
+                                    title = item.name ?: "Unknown",
+                                    artist = item.uploaderName ?: "Unknown",
+                                    albumArt = item.thumbnails.firstOrNull()?.url ?: "",
+                                    streamUrl = item.url,
+                                    album = "YouTube",
+                                    source = "youtube"
+                                )
+                            } catch (e: Exception) { null }
+                        }
+                } else emptyList()
+            } catch (e: Exception) {
+                e.printStackTrace()
+                emptyList()
+            }
+        }
+
     suspend fun search(query: String): List<Song> = withContext(Dispatchers.IO) {
         try {
             init()

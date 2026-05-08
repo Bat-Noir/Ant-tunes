@@ -1,5 +1,6 @@
 package com.ant.tunes.ui
 
+import androidx.annotation.OptIn
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -26,6 +27,10 @@ import com.ant.tunes.ui.theme.*
 import com.ant.tunes.viewmodel.PlayerViewModel
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.media3.common.util.UnstableApi
+import com.ant.tunes.player.CacheManager
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 
 
 @Composable
@@ -34,8 +39,9 @@ fun PlayerScreen(onOpenProfile: () -> Unit = {}) {
     val isPlaying by PlayerManager.isPlayingFlow.collectAsState()
     val vm: PlayerViewModel = viewModel()
     val recommendedSongs by vm.recommendedSongs.collectAsState()
-
+    var showCache by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
+
 
     LaunchedEffect(expanded) {
         vm.isPlayerExpanded.value = expanded
@@ -67,8 +73,11 @@ fun PlayerScreen(onOpenProfile: () -> Unit = {}) {
             vm = vm,
             recommendedSongs = recommendedSongs,
             onMiniPlayerClick = { expanded = true },
-            onOpenProfile = onOpenProfile
+            onOpenProfile = onOpenProfile,
+            showCache = showCache,                   // 🟢 Pass the state
+            onShowCacheChange = { showCache = it }   // 🟢 Pass the setter
         )
+
 
         if (expandAnim > 0f) {
             Box(
@@ -98,19 +107,37 @@ fun PlayerScreen(onOpenProfile: () -> Unit = {}) {
                 isPlaying = isPlaying
             )
         }
-    }
-}
+
+        // 🟢 WRAP IN A DIALOG TO COVER THE BOTTOM NAV
+        if (showCache) {
+            Dialog(
+                onDismissRequest = { showCache = false },
+                properties = DialogProperties(
+                    usePlatformDefaultWidth = false,
+                    decorFitsSystemWindows = false // Draws over everything!
+                )
+            ) {
+                CacheScreen(onBack = { showCache = false })
+            }
+        }
+
+    } // <-- Box closing bracket
+} // <-- PlayerScreen closing bracket
 
 // ═══════════════════════════════════════
 // 🏠 HOME CONTENT
 // ═══════════════════════════════════════
+@OptIn(UnstableApi::class)
 @Composable
 fun HomeContent(
     vm: PlayerViewModel,
     recommendedSongs: List<com.ant.tunes.data.Song>,
     onMiniPlayerClick: () -> Unit,
-    onOpenProfile: () -> Unit = {}
+    onOpenProfile: () -> Unit = {},
+    showCache: Boolean,                      // 🟢 Added
+    onShowCacheChange: (Boolean) -> Unit      // 🟢 Added
 ) {
+
     val context = LocalContext.current
     val currentSong by PlayerManager.currentSong.collectAsState()
     val isPlaying by PlayerManager.isPlayingFlow.collectAsState()
@@ -297,6 +324,83 @@ fun HomeContent(
             }
             Spacer(Modifier.height(28.dp))
         }
+
+        // ── SMART CACHE ALBUM ──
+        // ── SMART CACHE ALBUM ──
+// 🔥 Look at recentSongs instead of globalHistory!
+        val cachedSongs = recentSongs.filter { s -> CacheManager.isCached(context, s.streamUrl) }
+
+        if (cachedSongs.isNotEmpty()) {
+            item {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("SMART CACHE",
+                        style = MaterialTheme.typography.labelLarge, color = AntText3)
+                    Text("${cachedSongs.size} TRACKS",
+                        style = MaterialTheme.typography.labelSmall, color = accent)
+                }
+                Spacer(Modifier.height(12.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(AntSurface1)
+                        .border(1.dp, AntGlassBorder, RoundedCornerShape(20.dp))
+                        .clickable { onShowCacheChange(true) } // 🟢 You'll need this state for navigation
+                        .padding(16.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // ── THE DYNAMIC THUMBNAIL ──
+                        Box(modifier = Modifier.size(64.dp).clip(RoundedCornerShape(12.dp))) {
+                            if (cachedSongs.size >= 4) {
+                                Column {
+                                    Row {
+                                        AsyncImage(model = cachedSongs[0].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
+                                        AsyncImage(model = cachedSongs[1].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
+                                    }
+                                    Row {
+                                        AsyncImage(model = cachedSongs[2].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
+                                        AsyncImage(model = cachedSongs[3].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
+                                    }
+                                }
+                            } else {
+                                AsyncImage(
+                                    model = cachedSongs[0].albumArt,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(14.dp))
+
+                        // ── TEXT LABELS ──
+                        Column(Modifier.weight(1f)) {
+                            Text("Smart Cache",
+                                style = MaterialTheme.typography.titleSmall, color = AntText)
+                            Text("${cachedSongs.size} songs • auto-cached",
+                                style = MaterialTheme.typography.labelMedium, color = AntText2)
+                        }
+
+                        // ── PLAY BUTTON ──
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Play Cache",
+                            tint = accent,
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(accent.copy(alpha = 0.15f), CircleShape) // Using accentDim equivalent
+                                .padding(8.dp)
+                        )
+                    }
+                }
+                Spacer(Modifier.height(28.dp))
+            }
+        }
+
 
         // ── OFFLINE ALBUM ──
         if (downloadedSongs.isNotEmpty()) {
@@ -592,11 +696,28 @@ fun FullPlayer(isPlaying: Boolean, onCollapse: () -> Unit) {
 
             }
 
-            // PATCH 2 — pass liked state + toggle to ControlBar
+            // 🟢 SMART ARTIST + ALBUM FORMATTER
+            // Clean up junk that NewPipe sometimes adds to the artist name
+            val rawArtist = currentSong?.artist?.replace(" • YouTube", "", ignoreCase = true) ?: "Unknown Artist"
+            val rawAlbum = currentSong?.album ?: ""
+            val rawTitle = currentSong?.title ?: ""
+
+            // Only attach the album if it's valid AND it's not the fake "YouTube" album
+            val displayArtistText = if (
+                rawAlbum.isNotBlank() &&
+                rawAlbum.lowercase() != rawArtist.lowercase() &&
+                rawAlbum.lowercase() != rawTitle.lowercase() &&
+                rawAlbum.lowercase() != "youtube" // 🔥 Kills the duplicate!
+            ) {
+                "$rawArtist  •  $rawAlbum"
+            } else {
+                rawArtist
+            }
+
             ControlBar(
                 context = context,
                 title = currentSong?.title ?: "Play Something",
-                artist = currentSong?.artist ?: "Lil Bro",
+                artist = displayArtistText, // 🔥 Fixed formatter injected here!
                 album = currentSong?.album ?: "",
                 onPrev = { PlayerManager.previous() },
                 onPlayPause = { PlayerManager.togglePlayPause() },

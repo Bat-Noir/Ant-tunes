@@ -105,7 +105,9 @@ var IsSearchUIActive by mutableStateOf(false)
 @Composable
 fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
     val results = vm.combinedResults
-    val trendingSongs by vm.recommendedSongs.collectAsState()
+    // 🟢 BUG FIX: Bind trending to the real top tracks from PlayerManager so it always shows
+    val trendingSongs by PlayerManager.topTracks.collectAsState()
+
     val isLoading by vm.loading
     val listState = rememberLazyListState()
     val context = LocalContext.current
@@ -353,9 +355,10 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
                         itemsIndexed(items = trendingSongs.take(15)) { _, song ->
                             Row(
                                 modifier = Modifier.fillMaxWidth().clickable(indication = LocalIndication.current, interactionSource = remember { MutableInteractionSource() }) {
-                                    PlayerManager.play(context, trendingSongs, trendingSongs.indexOf(song))
+                                    vm.playFreshTrack(context, song) // 🟢 Fetch fresh URL first!
                                     RequestFullScreenPlayer = true
-                                }.padding(vertical = 10.dp),
+                                }
+                                    .padding(vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Image(painter = rememberAsyncImagePainter(song.albumArt), contentDescription = null, modifier = Modifier.size(50.dp).clip(RoundedCornerShape(12.dp)))

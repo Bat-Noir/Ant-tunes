@@ -11,8 +11,10 @@ data class GaanaSongResponse(
     val audio_url: String?,
     val thumb: String?,
     val status: Boolean,
-    val duration: String? = ""
+    val duration: String? = "",
+    val album_title: String? = null // 🔥 Catch the Gaana album!
 )
+
 
 data class GaanaSong(
     val id: String,

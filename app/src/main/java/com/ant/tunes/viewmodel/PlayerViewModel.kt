@@ -127,6 +127,28 @@ class PlayerViewModel : ViewModel() {
         }
     }
 
+    // 🟢 REVIVE DEAD LINKS (Edo Tensei)
+    fun playFreshTrack(context: android.content.Context, song: Song) {
+        viewModelScope.launch {
+            try {
+                // Instantly search the exact song to get a fresh, unexpired CDN link
+                val response = RetrofitClient.api.searchSongs(query = "${song.title} ${song.artist}", page = 1, limit = 1)
+                val freshUrl = response.body()?.data?.results?.firstOrNull()?.downloadUrl?.lastOrNull()?.url
+
+                if (freshUrl != null) {
+                    val freshSong = song.copy(streamUrl = freshUrl, source = "saavn")
+                    PlayerManager.playStream(context, freshSong)
+                } else {
+                    // Fallback just in case
+                    PlayerManager.playStream(context, song)
+                }
+            } catch (e: Exception) {
+                PlayerManager.playStream(context, song)
+            }
+        }
+    }
+
+
     fun loadBrowseCategory(categoryName: String) {
         viewModelScope.launch {
             try {
@@ -150,7 +172,7 @@ class PlayerViewModel : ViewModel() {
                             albumArt = it.image.lastOrNull()?.url ?: "",
                             streamUrl = url,
                             duration = 0L,
-                            album = categoryName,
+                            album = it.album?.name ?: categoryName, // 🔥 Catch the real album
                             source = "saavn"
                         )
                     }
@@ -174,104 +196,124 @@ class PlayerViewModel : ViewModel() {
         }
     }
 
+    // ═══════════════════════════════════════
+    // 🟢 MASTER SEARCH SYNC LOGIC
+    // ═══════════════════════════════════════
+
     fun searchSongs(query: String) {
         searchJob?.cancel()
-        searchPage = 1
-        searchHasMore = true
-        _results.clear()
-        _gaanaResults.clear()
-        _combinedResults.clear()
-        loadMore(query)
-        searchGaana(query)
-        searchYouTube(query)
-    }
+        searchJob = viewModelScope.launch {
+            _isSearching.value = true // Master loading state ON
 
-    fun searchGaana(query: String) {
-        _gaanaResults.clear()
-        viewModelScope.launch {
-            try {
-                val response = RetrofitClient.gaanaApi.searchSongs(query = query, type = "song", limit = 20)
-                if (response.isSuccessful) {
-                    val songs = response.body()?.results ?: emptyList()
-                    val mappedSongs = kotlinx.coroutines.coroutineScope {
-                        songs.map { gaanaSong ->
-                            async {
-                                try {
-                                    val songDetail = RetrofitClient.gaanaApi.getSong(gaanaSong.seokey)
-                                    val body = songDetail.body()
-                                    val audioUrl = body?.audio_url ?: return@async null
-                                    if (body.status != true) return@async null
+            searchPage = 1
+            searchHasMore = true
+            _results.clear()
+            _gaanaResults.clear()
+            _youtubeResults.clear()
+            _combinedResults.clear()
 
-                                    Song(
-                                        id = gaanaSong.id,
-                                        title = body.title ?: gaanaSong.title,
-                                        artist = body.artist ?: gaanaSong.subtitle,
-                                        albumArt = body.thumb ?: gaanaSong.thumb,
-                                        streamUrl = audioUrl,
-                                        album = "Gaana",
-                                        source = "gaana"
-                                    )
-                                } catch (e: Exception) { null }
-                            }
-                        }.awaitAll().filterNotNull().filter { song ->
-                            song.title.contains(query, ignoreCase = true) || song.artist.contains(query, ignoreCase = true)
-                        }
-                    }
-                    _gaanaResults.addAll(mappedSongs)
-                    rebuildCombinedResults()
-                }
-            } catch (e: Exception) { e.printStackTrace() }
+            // Run all 3 concurrent fetches
+            val saavnJob = async { fetchSaavnPage(query) }
+            val gaanaJob = async { fetchGaana(query) }
+            val ytJob = async { fetchYouTube(query) }
+
+            // Wait for all to finish
+            awaitAll(saavnJob, gaanaJob, ytJob)
+
+            rebuildCombinedResults()
+
+            _isSearching.value = false // Master loading state OFF
         }
     }
 
-    fun searchYouTube(query: String) {
-        _youtubeResults.clear()
-        viewModelScope.launch {
-            try {
-                val results = NewPipeHelper.search(query)
+    private suspend fun fetchSaavnPage(query: String) {
+        if (!searchHasMore) return
+        try {
+            val response = RetrofitClient.api.searchSongs(query = query, page = searchPage, limit = 10)
+            if (response.isSuccessful) {
+                val apiSongs = response.body()?.data?.results ?: emptyList()
+                val newSongs = apiSongs.mapNotNull {
+                    val url = it.downloadUrl.lastOrNull()?.url ?: return@mapNotNull null
+                    Song(
+                        id = it.id,
+                        title = it.name,
+                        artist = it.artists.primary.firstOrNull()?.name ?: "Unknown",
+                        albumArt = it.image.lastOrNull()?.url ?: "",
+                        streamUrl = url,
+                        duration = 0L,
+                        album = it.album?.name ?: "", // 🔥 Catch the real Saavn album!
+                        source = "saavn"
+                    )
+                }
+                _results.addAll(newSongs)
+                if (newSongs.isEmpty()) searchHasMore = false else searchPage++
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    private suspend fun fetchGaana(query: String) {
+        try {
+            val response = RetrofitClient.gaanaApi.searchSongs(query = query, type = "song", limit = 20)
+            if (response.isSuccessful) {
+                val songs = response.body()?.results ?: emptyList()
                 val mappedSongs = kotlinx.coroutines.coroutineScope {
-                    results.map { song ->
+                    songs.map { gaanaSong ->
                         async {
                             try {
-                                val audioUrl = NewPipeHelper.getAudioUrl(song.streamUrl) ?: return@async null
-                                song.copy(streamUrl = audioUrl)
+                                val songDetail = RetrofitClient.gaanaApi.getSong(gaanaSong.seokey)
+                                val body = songDetail.body()
+                                val audioUrl = body?.audio_url ?: return@async null
+                                if (body.status != true) return@async null
+
+                                Song(
+                                    id = gaanaSong.id,
+                                    title = body.title ?: gaanaSong.title,
+                                    artist = body.artist ?: gaanaSong.subtitle,
+                                    albumArt = body.thumb ?: gaanaSong.thumb,
+                                    streamUrl = audioUrl,
+                                    album = body.album_title ?: "", // 🔥 Catch the real Gaana album!
+                                    source = "gaana"
+                                )
                             } catch (e: Exception) { null }
                         }
-                    }.awaitAll().filterNotNull()
+                    }.awaitAll().filterNotNull().filter { song ->
+                        song.title.contains(query, ignoreCase = true) || song.artist.contains(query, ignoreCase = true)
+                    }
                 }
-                _youtubeResults.addAll(mappedSongs)
-                rebuildCombinedResults()
-            } catch (e: Exception) { e.printStackTrace() }
-        }
+                _gaanaResults.addAll(mappedSongs)
+            }
+        } catch (e: Exception) { e.printStackTrace() }
     }
 
+    private suspend fun fetchYouTube(query: String) {
+        try {
+            val results = NewPipeHelper.search(query)
+            val mappedSongs = kotlinx.coroutines.coroutineScope {
+                results.map { song ->
+                    async {
+                        try {
+                            val audioUrl = NewPipeHelper.getAudioUrl(song.streamUrl) ?: return@async null
+                            song.copy(streamUrl = audioUrl, source = "youtube")
+                        } catch (e: Exception) { null }
+                    }
+                }.awaitAll().filterNotNull()
+            }
+            _youtubeResults.addAll(mappedSongs)
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    // Upgraded infinite pagination that doesn't break the UI
     fun loadMore(query: String) {
         if (_isSearching.value || !searchHasMore) return
         searchJob = viewModelScope.launch {
-            try {
-                _isSearching.value = true
-                val response = RetrofitClient.api.searchSongs(query = query, page = searchPage, limit = 10)
-                if (response.isSuccessful) {
-                    val apiSongs = response.body()?.data?.results ?: emptyList()
-                    val newSongs = apiSongs.mapNotNull {
-                        val url = it.downloadUrl.lastOrNull()?.url ?: return@mapNotNull null
-                        Song(
-                            id = it.id,
-                            title = it.name,
-                            artist = it.artists.primary.firstOrNull()?.name ?: "Unknown",
-                            albumArt = it.image.lastOrNull()?.url ?: "",
-                            streamUrl = url,
-                            duration = 0L,
-                            album = ""
-                        )
-                    }
-                    _results.addAll(newSongs)
-                    rebuildCombinedResults()
-                    if (newSongs.isEmpty()) searchHasMore = false else searchPage++
-                }
-            } catch (e: Exception) { e.printStackTrace() } finally { _isSearching.value = false }
+            _isSearching.value = true
+            fetchSaavnPage(query)
+            rebuildCombinedResults()
+            _isSearching.value = false
         }
     }
+
+    // ═══════════════════════════════════════
 
     // 🟢 DYNAMIC RECOMMENDATION QUEUE ENGINE
     fun loadMoreRecommendations(seedSong: Song) {
@@ -294,6 +336,7 @@ class PlayerViewModel : ViewModel() {
                                 artist = it.artists.primary.firstOrNull()?.name ?: "Unknown",
                                 albumArt = it.image.lastOrNull()?.url ?: "",
                                 streamUrl = url,
+                                album = it.album?.name ?: "", // 🔥 Catch the real Saavn album!
                                 source = "saavn"
                             )
                         }

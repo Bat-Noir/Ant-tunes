@@ -9,11 +9,11 @@ object RetrofitClient {
 
     // 🎵 Saavn API
     private const val BASE_URL =
-        "https://your.url/"
+        "https://jiosaavn-api.ant-tunes.workers.dev/"
 
     // 🎵 Gaana API
     private const val GAANA_BASE_URL =
-        "https://your.url"
+        "https://ant-gaana-backend.vercel.app/"
 
     private val logging = HttpLoggingInterceptor().apply {
         level = HttpLoggingInterceptor.Level.BODY
@@ -22,7 +22,7 @@ object RetrofitClient {
     private val client = OkHttpClient.Builder()
         .addInterceptor { chain ->
             val request = chain.request().newBuilder()
-                .addHeader("your-api", "yours_575")
+                .addHeader("x-api-key", "ant_tunes_123_secure")
                 .build()
             chain.proceed(request)
         }

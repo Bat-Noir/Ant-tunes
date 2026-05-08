@@ -41,42 +41,51 @@ class MusicService : MediaSessionService() {
         val imageLoader = ImageLoader(this)
 
         // 🔥 THEN collect updates
+        // 🔥 THEN collect updates
         serviceScope.launch {
             PlayerManager.currentSong.collect { song ->
-
                 val session = mediaSession ?: return@collect
                 val currentSong = song ?: return@collect
 
-                val baseNotification = NotificationHelper.createNotification(
-                    this@MusicService,
-                    session,
-                    currentSong,
-                    null
-                )
-
-                startForeground(1, baseNotification)
-
-                val request = ImageRequest.Builder(this@MusicService)
-                    .data(currentSong.albumArt)
-                    .allowHardware(false)
-                    .size(coil.size.Size.ORIGINAL) // 🔥 FULL RESOLUTION
-                    .crossfade(true)
-                    .target { drawable ->
-                        val bitmap = (drawable as? BitmapDrawable)?.bitmap
-
-                        val updatedNotification =
-                            NotificationHelper.createNotification(
-                                this@MusicService,
-                                session,
-                                currentSong,
-                                bitmap
-                            )
-
-                        startForeground(1, updatedNotification)
-                    }
+                // 1. 🟢 INJECT METADATA FOR THE NATIVE LOCKSCREEN
+                val mediaMetadata = androidx.media3.common.MediaMetadata.Builder()
+                    .setTitle(currentSong.title)
+                    .setArtist(currentSong.artist)
+                    .setArtworkUri(android.net.Uri.parse(currentSong.albumArt))
                     .build()
 
-                imageLoader.enqueue(request)
+                val player = PlayerManager.getPlayer()
+                player?.currentMediaItem?.let { item ->
+                    val index = player.currentMediaItemIndex
+                    if (index >= 0) {
+                        player.replaceMediaItem(index, item.buildUpon().setMediaMetadata(mediaMetadata).build())
+                    }
+                }
+
+                // Show base notification immediately
+                val baseNotification = NotificationHelper.createNotification(
+                    this@MusicService, session, currentSong, null
+                )
+                startForeground(1, baseNotification)
+
+                // 2. 🟢 FORCE COIL TO FINISH BEFORE GC KILLS IT
+                try {
+                    val request = ImageRequest.Builder(this@MusicService)
+                        .data(currentSong.albumArt)
+                        .size(coil.size.Size.ORIGINAL)
+                        .allowHardware(false)
+                        .build()
+
+                    val result = imageLoader.execute(request) // Blocks until downloaded!
+                    val bitmap = (result.drawable as? BitmapDrawable)?.bitmap
+
+                    val updatedNotification = NotificationHelper.createNotification(
+                        this@MusicService, session, currentSong, bitmap
+                    )
+                    startForeground(1, updatedNotification)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
         }
     }

@@ -45,6 +45,8 @@ fun ControlBar(
     val position by PlayerManager.currentPosition.collectAsState()
     val duration by PlayerManager.duration.collectAsState()
     val isPlayingState by PlayerManager.isPlayingFlow.collectAsState()
+// 🟢 Add this state to track when the file is actively downloading
+    var isDownloading by remember { mutableStateOf(false) }
 
     var isShuffle by remember { mutableStateOf(false) }
 
@@ -221,18 +223,48 @@ fun ControlBar(
             val downloadState = PlayerManager.downloadStates[currentSong?.id]
                 ?: DownloadState.NOT_DOWNLOADED
 
-            IconButton(
-                onClick = { currentSong?.let { PlayerManager.downloadSong(context, it) } },
-                modifier = Modifier.size(50.dp)
+            // 🟢 Auto-stop the spinner when the background download finishes!
+            LaunchedEffect(downloadState) {
+                if (downloadState == DownloadState.DOWNLOADED) {
+                    isDownloading = false
+                }
+            }
+
+            // ── DOWNLOAD BUTTON WITH SPINNER ──
+            Box(
+                modifier = Modifier.size(50.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = if (downloadState == DownloadState.DOWNLOADED)
-                        Icons.Default.Check else Icons.Default.Download,
-                    contentDescription = "Download",
-                    tint = if (downloadState == DownloadState.DOWNLOADED) accent
-                    else Color.White,
-                    modifier = Modifier.size(26.dp)
-                )
+                if (isDownloading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        color = accent,
+                        strokeWidth = 2.5.dp,
+                        strokeCap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
+                } else if (downloadState == DownloadState.DOWNLOADED) {
+                    Icon(
+                        imageVector = Icons.Default.DownloadDone, // Looks cleaner than standard Check
+                        contentDescription = "Downloaded",
+                        tint = accent,
+                        modifier = Modifier.size(26.dp)
+                    )
+                } else {
+                    IconButton(
+                        onClick = {
+                            isDownloading = true
+                            currentSong?.let { PlayerManager.downloadSong(context, it) }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Download,
+                            contentDescription = "Download",
+                            tint = Color.White,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                }
             }
 
             IconButton(onClick = onPrev, modifier = Modifier.size(58.dp)) {

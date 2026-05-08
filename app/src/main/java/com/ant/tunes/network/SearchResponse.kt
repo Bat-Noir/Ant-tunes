@@ -14,9 +14,11 @@ data class SongDto(
     val name: String,
     val url: String,
     val image: List<Image>,
-    val downloadUrl: List<DownloadUrl>, // 🔥 THIS WAS MISSING
-    val artists: Artists
+    val downloadUrl: List<DownloadUrl>,
+    val artists: Artists,
+    val album: Album? = null // 🔥 Catch the album!
 )
+
 
 data class Image(
     val quality: String,
@@ -34,4 +36,11 @@ data class Artists(
 
 data class Artist(
     val name: String
+)
+
+// 🔥 New class to parse the Saavn album object
+data class Album(
+    val id: String?,
+    val name: String?,
+    val url: String?
 )

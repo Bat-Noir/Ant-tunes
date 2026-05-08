@@ -2,20 +2,45 @@ package com.ant.tunes.ui
 
 import android.content.Context
 import android.widget.Toast
+import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -23,7 +48,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.ant.tunes.ui.theme.*
+import androidx.media3.common.util.UnstableApi
+import com.ant.tunes.player.CacheManager
+import com.ant.tunes.player.PlayerManager
+import com.ant.tunes.ui.theme.AntBlack
+import com.ant.tunes.ui.theme.AntGlassBorder
+import com.ant.tunes.ui.theme.AntSurface1
+import com.ant.tunes.ui.theme.AntSurface2
+import com.ant.tunes.ui.theme.AntText
+import com.ant.tunes.ui.theme.AntText2
+import com.ant.tunes.ui.theme.AntText3
 
 val AccentColors = listOf(
     Color(0xFFDC143C), Color(0xFF8A2BE2), Color(0xFF0EA5E9), Color(0xFF10B981),
@@ -33,6 +67,7 @@ val AccentColors = listOf(
 
 val EqPresets = listOf("Flat", "Bass Boost", "Acoustic", "Electronic", "Vocal")
 
+@OptIn(UnstableApi::class)
 @Composable
 fun SettingsScreen(onClose: () -> Unit) {
     val context = LocalContext.current
@@ -40,11 +75,14 @@ fun SettingsScreen(onClose: () -> Unit) {
 
     var selectedColorInt by remember { mutableIntStateOf(prefs.getInt("accent_color", android.graphics.Color.parseColor("#0EA5E9"))) }
     val activeAccent = Color(selectedColorInt)
+
     var selectedEq by remember { mutableStateOf(prefs.getString("eq_preset", "Flat") ?: "Flat") }
 
-    var gapless by remember { mutableStateOf(prefs.getBoolean("gapless", false)) }
-    var normalize by remember { mutableStateOf(prefs.getBoolean("normalize", true)) }
-    var monoAudio by remember { mutableStateOf(prefs.getBoolean("mono_audio", false)) }
+    var gapless by remember { mutableStateOf(prefs.getBoolean("gapless_playback", false)) }
+
+    // 🟢 SMART CACHE STATES
+    var cacheEnabled by remember { mutableStateOf(prefs.getBoolean("cache_enabled", true)) }
+    var cacheLimitMB by remember { mutableFloatStateOf(prefs.getInt("cache_limit_mb", 500).toFloat()) }
 
     var stealthMode by remember { mutableStateOf(prefs.getBoolean("stealth", false)) }
     val scrollState = rememberScrollState()
@@ -95,36 +133,48 @@ fun SettingsScreen(onClose: () -> Unit) {
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // ── 2. EQUALIZER PRESETS ──
-            Text("EQUALIZER", style = MaterialTheme.typography.labelLarge, color = AntText3)
-            Spacer(modifier = Modifier.height(16.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(EqPresets) { preset ->
-                    val isSelected = preset == selectedEq
-                    Box(
-                        modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(if (isSelected) activeAccent else AntSurface2).border(1.dp, if (isSelected) activeAccent else AntGlassBorder, RoundedCornerShape(20.dp))
-                            .clickable {
-                                selectedEq = preset
-                                prefs.edit().putString("eq_preset", preset).apply()
-                            }
-                            .padding(horizontal = 20.dp, vertical = 10.dp)
-                    ) {
-                        Text(text = preset, style = MaterialTheme.typography.labelLarge, color = if (isSelected) AntBlack else AntText)
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            // ── 3. AUDIO TWEAKS ──
-            Text("AUDIO TWEAKS", style = MaterialTheme.typography.labelLarge, color = AntText3)
+            // ── 3. PLAYBACK & STORAGE ──
+            Text("PLAYBACK & STORAGE", style = MaterialTheme.typography.labelLarge, color = AntText3)
             Spacer(modifier = Modifier.height(16.dp))
             SettingsPanel {
-                SettingsToggleRow("Gapless Playback", "Eliminate silence between tracks", gapless, activeAccent) { gapless = it; prefs.edit().putBoolean("gapless", it).apply() }
+                SettingsToggleRow("Gapless Playback", "Eliminate silence between tracks", gapless, activeAccent) {
+                    gapless = it
+                    prefs.edit().putBoolean("gapless_playback", it).apply()
+                    PlayerManager.applyAudioTweaks(context) // Apply instantly to ExoPlayer
+                }
+
                 HorizontalDivider(color = AntGlassBorder, thickness = 1.dp)
-                SettingsToggleRow("Normalize Volume", "Set the same volume level for all songs", normalize, activeAccent) { normalize = it; prefs.edit().putBoolean("normalize", it).apply() }
-                HorizontalDivider(color = AntGlassBorder, thickness = 1.dp)
-                SettingsToggleRow("Mono Audio", "Combine channels when playing audio", monoAudio, activeAccent) { monoAudio = it; prefs.edit().putBoolean("mono_audio", it).apply() }
+
+                // 🟢 SMART CACHING TOGGLE
+                SettingsToggleRow("Smart Caching", "Automatically cache songs for offline playback", cacheEnabled, activeAccent) {
+                    cacheEnabled = it
+                    prefs.edit().putBoolean("cache_enabled", it).apply()
+                }
+
+                // 🟢 CACHE LIMIT SLIDER (Appears only if caching is enabled)
+                if (cacheEnabled) {
+                    HorizontalDivider(color = AntGlassBorder, thickness = 1.dp)
+                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Cache Size Limit", style = MaterialTheme.typography.titleMedium, color = AntText)
+                            Text("${cacheLimitMB.toInt()} MB", style = MaterialTheme.typography.titleMedium, color = activeAccent)
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Slider(
+                            value = cacheLimitMB,
+                            onValueChange = { cacheLimitMB = it },
+                            onValueChangeFinished = {
+                                prefs.edit().putInt("cache_limit_mb", cacheLimitMB.toInt()).apply()
+                            },
+                            valueRange = 100f..2048f, // 100 MB to ~2 GB
+                            colors = SliderDefaults.colors(
+                                thumbColor = activeAccent,
+                                activeTrackColor = activeAccent,
+                                inactiveTrackColor = AntSurface2
+                            )
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(32.dp))
@@ -133,8 +183,10 @@ fun SettingsScreen(onClose: () -> Unit) {
             Text("PRIVACY", style = MaterialTheme.typography.labelLarge, color = AntText3)
             Spacer(modifier = Modifier.height(16.dp))
             SettingsPanel {
-                // 🟢 Removed "Clear Search History" logic
-                SettingsToggleRow("Stealth Mode", "Pause search history", stealthMode, activeAccent) { stealthMode = it; prefs.edit().putBoolean("stealth", it).apply() }
+                SettingsToggleRow("Stealth Mode", "Pause search history", stealthMode, activeAccent) {
+                    stealthMode = it
+                    prefs.edit().putBoolean("stealth", it).apply()
+                }
             }
 
             Spacer(modifier = Modifier.height(32.dp))
@@ -146,16 +198,20 @@ fun SettingsScreen(onClose: () -> Unit) {
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp)) {
                     Text("Version", style = MaterialTheme.typography.titleMedium, color = AntText)
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text("v3.0 — AMOLED Edition", style = MaterialTheme.typography.bodyMedium, color = AntText2) // 🟢 Updated Version
+                    Text("v4.0 — AMOLED Edition", style = MaterialTheme.typography.bodyMedium, color = AntText2)
                 }
                 HorizontalDivider(color = AntGlassBorder, thickness = 1.dp)
                 Row(
-                    modifier = Modifier.fillMaxWidth().clickable { Toast.makeText(context, "Cache cleared (0 MB)", Toast.LENGTH_SHORT).show() }.padding(horizontal = 20.dp, vertical = 16.dp),
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        CacheManager.clearCache(context)
+                        Toast.makeText(context, "Cache wiped successfully", Toast.LENGTH_SHORT).show()
+                    }.padding(horizontal = 20.dp, vertical = 16.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("Clear Cache", style = MaterialTheme.typography.titleMedium, color = Color(0xFFFF4444))
                 }
+
             }
 
             Spacer(modifier = Modifier.height(48.dp))

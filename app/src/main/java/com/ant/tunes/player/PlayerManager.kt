@@ -3,16 +3,22 @@ package com.ant.tunes.player
 import android.content.Context
 import android.content.Intent
 import android.os.Environment
+import androidx.annotation.OptIn
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import com.ant.tunes.data.DownloadState
 import com.ant.tunes.data.Song
 import com.ant.tunes.service.MusicService
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -81,6 +87,43 @@ object PlayerManager {
 
     enum class RepeatMode { OFF, ALL, ONE }
 
+    // 🟢 SLEEP TIMER STATE
+    private var sleepTimerJob: Job? = null
+    private val _sleepTimerMinutes = MutableStateFlow(0)
+    val sleepTimerMinutes: StateFlow<Int> = _sleepTimerMinutes
+
+    // 🟢 SET SLEEP TIMER
+    fun setSleepTimer(minutes: Int) {
+        sleepTimerJob?.cancel()
+        _sleepTimerMinutes.value = minutes
+
+        if (minutes > 0) {
+            sleepTimerJob = CoroutineScope(Dispatchers.Main).launch {
+                var timeLeft = minutes * 60
+                while (timeLeft > 0) {
+                    delay(1000)
+                    timeLeft--
+                }
+                // Time's up! Pause the music.
+                player?.pause()
+                _sleepTimerMinutes.value = 0
+            }
+        }
+    }
+
+    // 🟢 APPLY AUDIO TWEAKS (Call this when player initializes and when settings change)
+    @OptIn(UnstableApi::class)
+    fun applyAudioTweaks(context: Context) {
+        val prefs = context.getSharedPreferences("ant_prefs", Context.MODE_PRIVATE)
+
+        // Gapless (Skip Silence)
+        val skipSilence = prefs.getBoolean("gapless_playback", false)
+        player?.skipSilenceEnabled = skipSilence
+
+        // (Mono and Normalize would need custom AudioProcessors injected into ExoPlayer Builder here)
+    }
+
+
     // 🟢 STRING NORMALIZER FOR DE-DUPLICATION
     private fun generateFingerprint(song: Song): String {
         val title = song.title.lowercase().replace(Regex("\\[.*?\\]|\\(.*?\\)"), "").trim()
@@ -125,14 +168,29 @@ object PlayerManager {
         player?.seekTo(index, 0)
     }
 
+    @OptIn(UnstableApi::class)
     fun init(context: Context) {
         appContext = context.applicationContext
         loadHistory() // 🟢 Load saved history on startup
 
         if (player == null) {
-            player = ExoPlayer.Builder(context).build()
+            // 🟢 Inject the Cache DataSource Factory
+            val dataSourceFactory = CacheManager.getCacheDataSourceFactory(context)
+
+            player = ExoPlayer.Builder(context)
+                .setMediaSourceFactory(
+                    androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context)
+                        .setDataSourceFactory(dataSourceFactory)
+                )
+                .build()
+
+
             player?.repeatMode = Player.REPEAT_MODE_OFF
+            // 🟢 Apply saved audio tweaks (Gapless, etc.)
+            applyAudioTweaks(context)
+
             player?.addListener(object : Player.Listener {
+
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     _isPlaying.value = isPlaying
@@ -214,6 +272,22 @@ object PlayerManager {
         // 4. Persist to disk quietly
         CoroutineScope(Dispatchers.IO).launch {
             saveHistory(context, limitedRecent, limitedTop, songPlayCounts)
+        }
+    }
+
+    // 🟢 SERVICE RESURRECTION JUTSU
+    private fun wakeUpService() {
+        appContext?.let { ctx ->
+            try {
+                val intent = Intent(ctx, MusicService::class.java)
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    ctx.startForegroundService(intent)
+                } else {
+                    ctx.startService(intent)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
@@ -545,12 +619,26 @@ object PlayerManager {
     }
 
     fun togglePlayPause() {
-        player?.let { if (it.isPlaying) it.pause() else it.play() }
+        player?.let {
+            if (it.isPlaying) {
+                it.pause()
+            } else {
+                wakeUpService() // 🔥 Force wake the service on resume!
+                it.play()
+            }
+        }
     }
 
-    fun next() { player?.seekToNextMediaItem() }
+    fun next() {
+        wakeUpService() // 🔥 Force wake the service!
+        player?.seekToNextMediaItem()
+    }
 
-    fun previous() { player?.seekToPreviousMediaItem() }
+    fun previous() {
+        wakeUpService() // 🔥 Force wake the service!
+        player?.seekToPreviousMediaItem()
+    }
+
 
     fun seekTo(position: Long) { player?.seekTo(position) }
 
