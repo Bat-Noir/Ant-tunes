@@ -20,10 +20,17 @@ Stream music from multiple sources with a clean UI and smooth playback.
 ## 📸 Screenshots
 
 <p align="center">
-  <img src="screenshots/home.jpg" width="200"/>
-  <img src="screenshots/search.jpg" width="200"/>
-  <img src="screenshots/player.jpg" width="200"/>
-  <img src="screenshots/library.jpg" width="200"/>
+  <img src="screenshots/home.png" width="220"/>
+  <img src="screenshots/search.png" width="220"/>
+  <img src="screenshots/search2.png" width="220"/>
+  <img src="screenshots/library.png" width="220"/>
+</p>
+
+<p align="center">
+  <img src="screenshots/player.png" width="220"/>
+  <img src="screenshots/player2.png" width="220"/>
+  <img src="screenshots/profile.png" width="220"/>
+  <img src="screenshots/settings.png" width="220"/>
 </p>
 
 ---
