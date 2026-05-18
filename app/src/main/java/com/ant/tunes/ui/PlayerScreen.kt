@@ -31,6 +31,7 @@ import androidx.media3.common.util.UnstableApi
 import com.ant.tunes.player.CacheManager
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.ant.tunes.lastfm.LastFmAuthManager
 
 
 @Composable
@@ -134,11 +135,23 @@ fun HomeContent(
     recommendedSongs: List<com.ant.tunes.data.Song>,
     onMiniPlayerClick: () -> Unit,
     onOpenProfile: () -> Unit = {},
-    showCache: Boolean,                      // 🟢 Added
-    onShowCacheChange: (Boolean) -> Unit      // 🟢 Added
+    showCache: Boolean,
+    onShowCacheChange: (Boolean) -> Unit
 ) {
-
     val context = LocalContext.current
+
+    // 🟢 ADDED: Modern Network Connectivity Checker
+    val connectivityManager = context.getSystemService(
+        android.content.Context.CONNECTIVITY_SERVICE
+    ) as android.net.ConnectivityManager
+    val network = connectivityManager.activeNetwork
+    val capabilities = connectivityManager.getNetworkCapabilities(network)
+    val isOnline = capabilities != null && (
+            capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) ||
+                    capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                    capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)
+            )
+
     val currentSong by PlayerManager.currentSong.collectAsState()
     val isPlaying by PlayerManager.isPlayingFlow.collectAsState()
     val position by PlayerManager.currentPosition.collectAsState()
@@ -153,8 +166,36 @@ fun HomeContent(
     val userName by remember { mutableStateOf(prefs.getString("user_name", "Listener")?.ifEmpty { "Listener" } ?: "Listener") }
 
     // 🟢 REAL DATA STATEFLOWS
-    val recentSongs by PlayerManager.recentlyPlayed.collectAsState()
-    val topTracks by PlayerManager.topTracks.collectAsState()
+    val localRecent by PlayerManager.recentlyPlayed.collectAsState()
+    val localTopTracks by PlayerManager.topTracks.collectAsState()
+    val lastFmRecent by vm.lastFmRecentTracks.collectAsState()
+    val lastFmTop by vm.lastFmTopTracks.collectAsState()
+    val isLastFmConnected by LastFmAuthManager.isLoggedIn.collectAsState()
+
+    // 🟢 FETCH THE FALLBACK CHARTS
+    val publicCharts by vm.publicCharts.collectAsState()
+
+    // ✅ DYNAMIC FALLBACK LOGIC
+    val recentSongs = when {
+        isLastFmConnected && lastFmRecent.isNotEmpty() -> lastFmRecent
+        localRecent.isNotEmpty() -> localRecent
+        else -> emptyList()
+    }
+
+    val topTracks = when {
+        isLastFmConnected && lastFmTop.isNotEmpty() -> lastFmTop
+        localTopTracks.isNotEmpty() -> localTopTracks
+        publicCharts.isNotEmpty() -> publicCharts // ✅ Public fallback!
+        else -> emptyList()
+    }
+
+    // 🟢 DYNAMIC SECTION LABEL
+    val topTracksLabel = when {
+        isLastFmConnected && lastFmTop.isNotEmpty() -> "YOUR TOP TRACKS"
+        localTopTracks.isNotEmpty() -> "YOUR TOP TRACKS"
+        else -> "TRENDING NOW"
+    }
+
 
 
     val accent = LocalAccentColor.current
@@ -182,14 +223,26 @@ fun HomeContent(
             top = 0.dp, bottom = 220.dp
         )
     ) {
+        // 🟢 ADDED: Offline Banner (Appears first!)
+        item {
+            if (!isOnline) {
+                Spacer(Modifier.height(48.dp)) // Pushes banner below the transparent status bar
+                NoInternetBanner()
+                Spacer(Modifier.height(12.dp))
+            }
+        }
+
         // ── HERO ──
         item {
-            Spacer(Modifier.height(56.dp))
+            // 🟢 Pro-tip: Dynamically shrink this spacer if the banner is showing
+            Spacer(Modifier.height(if (!isOnline) 8.dp else 56.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+// ... rest of the Hero code stays the same
+
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(6.dp).alpha(dotAlpha).background(accent, CircleShape))
                     Spacer(Modifier.width(8.dp))
@@ -326,7 +379,6 @@ fun HomeContent(
         }
 
         // ── SMART CACHE ALBUM ──
-        // ── SMART CACHE ALBUM ──
 // 🔥 Look at recentSongs instead of globalHistory!
         val cachedSongs = recentSongs.filter { s -> CacheManager.isCached(context, s.streamUrl) }
 
@@ -401,6 +453,69 @@ fun HomeContent(
             }
         }
 
+        // ── MADE FOR YOU (LAST.FM DISCOVER) ──
+        if (recommendedSongs.isNotEmpty()) {
+            item {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("MADE FOR YOU", style = MaterialTheme.typography.labelLarge, color = AntText3)
+                    Text("DISCOVER", style = MaterialTheme.typography.labelSmall, color = accent)
+                }
+                Spacer(Modifier.height(12.dp))
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(end = 8.dp)
+                ) {
+                    items(recommendedSongs) { song ->
+                        Column(
+                            modifier = Modifier
+                                .width(140.dp)
+                                .clickable {
+                                    PlayerManager.playStream(context, song)
+                                    RequestFullScreenPlayer = true
+                                }
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(140.dp)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(AntSurface2)
+                            ) {
+                                AsyncImage(
+                                    model = song.albumArt,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                                // 🟢 The Nothing OS "Match" Badge
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(8.dp)
+                                        .background(AntBlack.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                                        .border(0.5.dp, accentHot, RoundedCornerShape(8.dp))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text("98% Match", style = MaterialTheme.typography.labelSmall, color = accent, fontSize = 8.sp)
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Text(song.title,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = AntText, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis)
+                            Text(song.artist,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = AntText2, maxLines = 1)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(28.dp))
+            }
+        }
 
         // ── OFFLINE ALBUM ──
         if (downloadedSongs.isNotEmpty()) {
@@ -529,11 +644,12 @@ fun HomeContent(
 
         // (Up Next Queue Removed from Home Screen)
 
-        // ── TOP TRACKS ──
+        // ── TOP TRACKS / TRENDING NOW ──
         if (topTracks.isNotEmpty()) {
             item {
-                Text("YOUR TOP TRACKS",
+                Text(topTracksLabel,
                     style = MaterialTheme.typography.labelLarge, color = AntText3)
+
                 Spacer(Modifier.height(12.dp))
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -599,7 +715,8 @@ fun FullPlayer(isPlaying: Boolean, onCollapse: () -> Unit) {
     val vm: PlayerViewModel = viewModel() // 🟢 Needed for Lyrics
     val currentLyrics by vm.currentLyrics
     val isLyricsLoading by vm.isLyricsLoading
-
+    var isLyricsFullScreen by remember { mutableStateOf(false) }
+    val lrcLines by vm.currentLrcLines  // ✅ new state
     val accent = LocalAccentColor.current
 
 
@@ -691,7 +808,13 @@ fun FullPlayer(isPlaying: Boolean, onCollapse: () -> Unit) {
                     VinylArt(imageUrl = currentSong?.albumArt, isPlaying = isPlaying)
                 } else {
                     // 🟢 WIRED LYRICS TAB
-                    LyricsTab(lyrics = currentLyrics, isLoading = isLyricsLoading)
+                    LyricsTab(
+                        lyrics = currentLyrics,
+                        isLoading = isLyricsLoading,
+                        lrcLines = lrcLines,
+                        isFullScreen = isLyricsFullScreen,
+                        onToggleFullScreen = { isLyricsFullScreen = !isLyricsFullScreen }
+                    )
                 }
 
             }
@@ -729,6 +852,7 @@ fun FullPlayer(isPlaying: Boolean, onCollapse: () -> Unit) {
                     currentSong?.let { song ->
                         if (isLiked) globalLikedSongs.removeAll { it.id == song.id }
                         else globalLikedSongs.add(song)
+                        com.ant.tunes.player.AppDataManager.saveLikedSongs(context, globalLikedSongs)
                     }
                 }
             )
@@ -781,6 +905,49 @@ fun FullPlayer(isPlaying: Boolean, onCollapse: () -> Unit) {
                         )
                     }
                 }
+            }
+        }
+
+        // ── FULLSCREEN LYRICS OVERLAY ──
+        if (isLyricsFullScreen) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(AntBlack)
+                    // swipe down to exit
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures { _, dragAmount ->
+                            if (dragAmount > 40f) isLyricsFullScreen = false
+                        }
+                    }
+            ) {
+                // glass card container
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(AntSurface1)
+                        .border(1.dp, AntGlassBorderHot, RoundedCornerShape(28.dp))
+                ) {
+                    LyricsTab(
+                        lyrics = currentLyrics,
+                        isLoading = isLyricsLoading,
+                        lrcLines = lrcLines,
+                        isFullScreen = true,
+                        onToggleFullScreen = { isLyricsFullScreen = false }
+                    )
+                }
+
+                // drag handle
+                Box(
+                    modifier = Modifier
+                        .width(40.dp)
+                        .height(4.dp)
+                        .background(AntGlassBorder, RoundedCornerShape(2.dp))
+                        .align(Alignment.TopCenter)
+                        .padding(top = 8.dp)
+                )
             }
         }
     }

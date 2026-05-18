@@ -21,6 +21,11 @@ import androidx.compose.ui.unit.*
 import coil.compose.AsyncImage
 import com.ant.tunes.player.PlayerManager
 import com.ant.tunes.ui.theme.*
+import com.ant.tunes.lastfm.LastFmAuthManager
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.ant.tunes.viewmodel.PlayerViewModel
+import kotlinx.coroutines.launch
+
 
 @Composable
 fun ProfileScreen(
@@ -35,6 +40,13 @@ fun ProfileScreen(
     val playlist by PlayerManager.playlistFlow.collectAsState()
     val downloadedSongs by PlayerManager.downloadedSongs.collectAsState()
     val currentSong by PlayerManager.currentSong.collectAsState()
+
+    // 🟢 LAST.FM STATES (New!)
+    val isLastFmConnected by LastFmAuthManager.isLoggedIn.collectAsState()
+    val lastFmUsername by LastFmAuthManager.username.collectAsState()
+    val vm: PlayerViewModel = viewModel()
+    val coroutineScope = rememberCoroutineScope()
+
 
     // 🟢 Grab the dynamic accent color
     val accent = LocalAccentColor.current
@@ -269,6 +281,64 @@ fun ProfileScreen(
                     Text("ACTIVE", style = MaterialTheme.typography.labelSmall, color = color)
                 }
                 HorizontalDivider(color = AntGlassBorder, thickness = 0.5.dp)
+            }
+
+            // 🟢 LAST.FM INTEGRATION UI (Paste this here!)
+            Spacer(Modifier.height(28.dp))
+            Text("INTEGRATIONS", style = MaterialTheme.typography.labelLarge, color = AntBlue)
+            Spacer(Modifier.height(12.dp))
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(AntSurface1)
+                    .border(1.dp, if (isLastFmConnected) AntGlassBorderHot else AntGlassBorder, RoundedCornerShape(20.dp))
+                    .padding(16.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Last.fm logo block
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFFD51007)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("lfm", style = MaterialTheme.typography.labelLarge, color = Color.White)
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Last.fm", style = MaterialTheme.typography.titleSmall, color = AntText)
+                        Text(
+                            if (isLastFmConnected) "Connected as $lastFmUsername" else "Connect for smart recommendations",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isLastFmConnected) AntBlue else AntText3
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            if (isLastFmConnected) {
+                                LastFmAuthManager.logout(context)
+                            } else {
+                                coroutineScope.launch {
+                                    LastFmAuthManager.startAuth(context)
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isLastFmConnected) AntSurface2 else Color(0xFFD51007)
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Text(
+                            if (isLastFmConnected) "DISCONNECT" else "CONNECT",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color.White
+                        )
+                    }
+                }
             }
         }
     }

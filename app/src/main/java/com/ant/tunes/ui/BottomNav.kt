@@ -109,7 +109,7 @@ private fun NavItem(
             .scale(scale)
             .clip(RoundedCornerShape(20.dp))
             .background(
-                if (isActive) accent.copy(alpha = 0.15f) else Color.Transparent
+                if (isActive) accent.copy(alpha = 0.35f) else Color.Transparent
             )
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },

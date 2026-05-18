@@ -34,6 +34,7 @@ import com.ant.tunes.data.Song
 import com.ant.tunes.player.PlayerManager
 import com.ant.tunes.ui.theme.*
 import java.util.UUID
+import kotlinx.coroutines.launch
 
 // 🟢 Explicit imports to fix all "Unresolved Reference" and "getValue/setValue" errors
 import androidx.compose.runtime.getValue
@@ -51,6 +52,20 @@ class PlaylistData(val id: String, var name: MutableState<String>) {
 
 val globalPlaylists = mutableStateListOf<PlaylistData>()
 val globalLikedSongs = mutableStateListOf<Song>()
+
+// ✅ Call this once from MainActivity to restore data
+fun initGlobalData(context: android.content.Context) {
+    if (globalPlaylists.isEmpty()) {
+        globalPlaylists.addAll(
+            com.ant.tunes.player.AppDataManager.loadPlaylists(context)
+        )
+    }
+    if (globalLikedSongs.isEmpty()) {
+        globalLikedSongs.addAll(
+            com.ant.tunes.player.AppDataManager.loadLikedSongs(context)
+        )
+    }
+}
 var TargetPlaylistId by mutableStateOf<String?>(null)
 var RequestTabSwitch by mutableStateOf<NavTab?>(null)
 var RequestFullScreenPlayer by mutableStateOf(false)
@@ -98,6 +113,10 @@ fun LibraryMain(onNavigate: (String, String?) -> Unit) {
     var showRenameDialog by remember { mutableStateOf<PlaylistData?>(null) }
     var playlistInputName by remember { mutableStateOf("") }
 
+    // 🟢 ADDED: State for the Import Sheet
+    var showImportSheet by remember { mutableStateOf(false) }
+
+
     // ── DIALOGS ──
     if (showCreateDialog) {
         AlertDialog(
@@ -122,6 +141,7 @@ fun LibraryMain(onNavigate: (String, String?) -> Unit) {
                 TextButton(onClick = {
                     if (playlistInputName.isNotBlank()) {
                         globalPlaylists.add(PlaylistData(UUID.randomUUID().toString(), mutableStateOf(playlistInputName)))
+                        com.ant.tunes.player.AppDataManager.savePlaylists(context, globalPlaylists)
                     }
                     playlistInputName = ""
                     showCreateDialog = false
@@ -152,7 +172,10 @@ fun LibraryMain(onNavigate: (String, String?) -> Unit) {
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (playlistInputName.isNotBlank()) showRenameDialog?.name?.value = playlistInputName
+                    if (playlistInputName.isNotBlank()) {
+                        showRenameDialog?.name?.value = playlistInputName
+                        com.ant.tunes.player.AppDataManager.savePlaylists(context, globalPlaylists)
+                    }
                     playlistInputName = ""
                     showRenameDialog = null
                 }) { Text("Rename", color = accent) }
@@ -161,6 +184,15 @@ fun LibraryMain(onNavigate: (String, String?) -> Unit) {
             containerColor = AntSurface2
         )
     }
+
+    // 🟢 ADDED: Render the Import Sheet when triggered
+    if (showImportSheet) {
+        ImportPlaylistSheet(
+            onDismiss = { showImportSheet = false },
+            context = context
+        )
+    }
+
 
     // ── MAIN CONTENT ──
     LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp), contentPadding = PaddingValues(bottom = 160.dp)) {
@@ -193,9 +225,15 @@ fun LibraryMain(onNavigate: (String, String?) -> Unit) {
             item {
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("YOUR PLAYLISTS", style = MaterialTheme.typography.labelLarge, color = AntText3)
+
+                    // 🟢 ADDED: The Import Button
+                    TextButton(onClick = { showImportSheet = true }) {
+                        Text("IMPORT", style = MaterialTheme.typography.labelSmall, color = accent)
+                    }
                 }
 
                 Row(
+
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(AntSurface1).clickable { playlistInputName = ""; showCreateDialog = true }.padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -222,8 +260,16 @@ fun LibraryMain(onNavigate: (String, String?) -> Unit) {
                     Box {
                         IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.MoreVert, null, tint = AntText2) }
                         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }, modifier = Modifier.background(Color(0xFF1E1E1E))) {
-                            DropdownMenuItem(text = { Text("Rename", color = Color.White) }, onClick = { showMenu = false; playlistInputName = playlist.name.value; showRenameDialog = playlist })
-                            DropdownMenuItem(text = { Text("Delete", color = Color(0xFFFF4444)) }, onClick = { showMenu = false; globalPlaylists.remove(playlist) })
+                            DropdownMenuItem(text = { Text("Rename", color = Color.White) }, onClick = {
+                                showMenu = false
+                                playlistInputName = playlist.name.value
+                                showRenameDialog = playlist
+                            })
+                            DropdownMenuItem(text = { Text("Delete", color = Color(0xFFFF4444)) }, onClick = {
+                                showMenu = false
+                                globalPlaylists.remove(playlist)
+                                com.ant.tunes.player.AppDataManager.savePlaylists(context, globalPlaylists)
+                            })
                         }
                     }
                 }
@@ -269,6 +315,148 @@ fun LibraryMain(onNavigate: (String, String?) -> Unit) {
                     Spacer(modifier = Modifier.height(8.dp))
                 }
             }
+        }
+    }
+}
+
+// New composable
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ImportPlaylistSheet(
+    onDismiss: () -> Unit,
+    context: android.content.Context
+) {
+    val accent = LocalAccentColor.current
+    val coroutineScope = rememberCoroutineScope()
+    var isLoading by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf("") }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF121212)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp)
+                .padding(bottom = 40.dp)
+        ) {
+            Text("IMPORT PLAYLIST",
+                style = MaterialTheme.typography.labelLarge,
+                color = accent)
+            Spacer(Modifier.height(20.dp))
+
+            // Last.fm import
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(AntSurface1)
+                    .border(1.dp, AntGlassBorder, RoundedCornerShape(16.dp))
+                    .clickable {
+                        if (!com.ant.tunes.lastfm.LastFmRepository.isLoggedIn(context)) {
+                            message = "Connect Last.fm first in Profile"
+                            return@clickable
+                        }
+                        coroutineScope.launch {
+                            isLoading = true
+                            try {
+                                // Last.fm loved tracks → import as playlist
+                                val username = com.ant.tunes.lastfm.LastFmRepository
+                                    .getUsername(context) ?: return@launch
+                                val url = "https://ws.audioscrobbler.com/2.0/?method=user.getLovedTracks&user=${username}&api_key=e2427f83cfff636cb919ccdc4db1b4c1&format=json&limit=50"
+                                val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                                if (conn.responseCode == 200) {
+                                    val resp = conn.inputStream.bufferedReader().readText()
+                                    val json = org.json.JSONObject(resp)
+                                    val tracks = json.getJSONObject("lovedtracks")
+                                        .getJSONArray("track")
+
+                                    val playlist = com.ant.tunes.ui.PlaylistData(
+                                        java.util.UUID.randomUUID().toString(),
+                                        androidx.compose.runtime.mutableStateOf("Last.fm Loved Songs")
+                                    )
+
+                                    for (i in 0 until minOf(tracks.length(), 50)) {
+                                        val t = tracks.getJSONObject(i)
+                                        val name = t.getString("name")
+                                        val artist = t.getJSONObject("artist").getString("name")
+                                        val imgUrl = t.getJSONArray("image")
+                                            .let { arr ->
+                                                arr.getJSONObject(arr.length() - 1)
+                                                    .optString("#text", "")
+                                            }
+                                        // create song with metadata (streamUrl resolved on play)
+                                        playlist.tracks.add(
+                                            com.ant.tunes.data.Song(
+                                                id = "${name}_${artist}",
+                                                title = name,
+                                                artist = artist,
+                                                albumArt = imgUrl,
+                                                streamUrl = "",
+                                                source = "lastfm_import"
+                                            )
+                                        )
+                                    }
+
+                                    if (!globalPlaylists.any { it.name.value == playlist.name.value }) {
+                                        globalPlaylists.add(playlist)
+                                        com.ant.tunes.player.AppDataManager
+                                            .savePlaylists(context, globalPlaylists)
+                                        message = "✅ Imported ${playlist.tracks.size} loved tracks!"
+                                    } else {
+                                        message = "Playlist already imported"
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                message = "Import failed: ${e.message}"
+                            } finally {
+                                isLoading = false
+                            }
+                        }
+                    }
+                    .padding(16.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFFD51007)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("lfm", style = MaterialTheme.typography.labelLarge,
+                            color = Color.White)
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Last.fm Loved Songs",
+                            style = MaterialTheme.typography.titleSmall, color = AntText)
+                        Text("Import your loved tracks",
+                            style = MaterialTheme.typography.labelSmall, color = AntText2)
+                    }
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = accent, strokeWidth = 2.dp
+                        )
+                    }
+                }
+            }
+
+            if (message.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                Text(message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (message.startsWith("✅")) accent else Color(0xFFFF6B6B))
+            }
+
+            Spacer(Modifier.height(16.dp))
+            Text(
+                "YouTube Music & Spotify direct import requires Premium APIs.\nExport your Spotify/YouTube playlist to Last.fm first, then import here.",
+                style = MaterialTheme.typography.labelSmall,
+                color = AntText3
+            )
         }
     }
 }

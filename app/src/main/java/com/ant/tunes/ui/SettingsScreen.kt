@@ -80,6 +80,11 @@ fun SettingsScreen(onClose: () -> Unit) {
 
     var gapless by remember { mutableStateOf(prefs.getBoolean("gapless_playback", false)) }
 
+    // 🟢 ADDED: New Audio States
+    var crossfade by remember { mutableStateOf(prefs.getBoolean("crossfade", false)) }
+    var showLyricsByDefault by remember { mutableStateOf(prefs.getBoolean("lyrics_default", false)) }
+
+
     // 🟢 SMART CACHE STATES
     var cacheEnabled by remember { mutableStateOf(prefs.getBoolean("cache_enabled", true)) }
     var cacheLimitMB by remember { mutableFloatStateOf(prefs.getInt("cache_limit_mb", 500).toFloat()) }
@@ -144,6 +149,23 @@ fun SettingsScreen(onClose: () -> Unit) {
                 }
 
                 HorizontalDivider(color = AntGlassBorder, thickness = 1.dp)
+
+                // 🟢 ADDED: Crossfade
+                SettingsToggleRow("Crossfade", "Smooth transitions between songs", crossfade, activeAccent) {
+                    crossfade = it
+                    prefs.edit().putBoolean("crossfade", it).apply()
+                }
+
+                HorizontalDivider(color = AntGlassBorder, thickness = 1.dp)
+
+                // 🟢 ADDED: Show Lyrics by Default
+                SettingsToggleRow("Show Lyrics by Default", "Open full player in Lyrics tab", showLyricsByDefault, activeAccent) {
+                    showLyricsByDefault = it
+                    prefs.edit().putBoolean("lyrics_default", it).apply()
+                }
+
+                HorizontalDivider(color = AntGlassBorder, thickness = 1.dp)
+
 
                 // 🟢 SMART CACHING TOGGLE
                 SettingsToggleRow("Smart Caching", "Automatically cache songs for offline playback", cacheEnabled, activeAccent) {

@@ -55,6 +55,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.ant.tunes.player.AppDataManager
 import com.ant.tunes.player.PlayerManager
 import com.ant.tunes.ui.theme.AntBlack
 import com.ant.tunes.ui.theme.AntGlassBorder
@@ -250,12 +251,14 @@ fun PlaylistDetailScreen(playlistId: String, onBack: () -> Unit) {
                         IconButton(onClick = {
                             val item = playlist.tracks.removeAt(index)
                             playlist.tracks.add(index - 1, item)
+                            AppDataManager.savePlaylists(context, globalPlaylists)
                         }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.ArrowUpward, null, tint = AntText3, modifier = Modifier.size(20.dp)) }
                     }
                     if (index < playlist.tracks.size - 1) {
                         IconButton(onClick = {
                             val item = playlist.tracks.removeAt(index)
                             playlist.tracks.add(index + 1, item)
+                            AppDataManager.savePlaylists(context, globalPlaylists)
                         }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.ArrowDownward, null, tint = AntText3, modifier = Modifier.size(20.dp)) }
                     }
                     IconButton(onClick = { playlist.tracks.remove(song) }, modifier = Modifier.size(32.dp)) {

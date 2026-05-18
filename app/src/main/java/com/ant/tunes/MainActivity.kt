@@ -12,13 +12,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.ant.tunes.lastfm.LastFmAuthManager
 import com.ant.tunes.player.PlayerManager
 import com.ant.tunes.ui.*
 import com.ant.tunes.ui.components.AmbientBlobs
 import com.ant.tunes.ui.theme.AntBlack
 import com.ant.tunes.ui.theme.AntTunesTheme
 import com.ant.tunes.viewmodel.PlayerViewModel
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -26,9 +29,26 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         PlayerManager.init(this)
         PlayerManager.restorePlayback(this)
+        // ✅ restore liked songs + playlists from disk
+        com.ant.tunes.ui.initGlobalData(this)
+        LastFmAuthManager.init(this)
         setContent {
             AntTunesTheme {
                 AntTunesApp()
+            }
+        }
+    }
+
+    // 🟢 NEW: The Last.fm Catcher! Grabs the user when the browser sends them back
+    override fun onResume() {
+        super.onResume()
+        val token = getSharedPreferences("ant_prefs", Context.MODE_PRIVATE).getString("lastfm_token", null)
+        if (token != null && !LastFmAuthManager.isLoggedIn.value) {
+            lifecycleScope.launch {
+                val success = LastFmAuthManager.completeAuth(this@MainActivity)
+                if (success) {
+                    // refresh Last.fm data
+                }
             }
         }
     }

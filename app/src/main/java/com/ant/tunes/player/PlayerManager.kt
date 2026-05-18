@@ -206,8 +206,24 @@ object PlayerManager {
 
                     newCurrentSong?.let { song ->
                         playedSongFingerprints.add(generateFingerprint(song))
-                        // 🟢 Trigger tracking whenever a new song starts
+
+                        // 🟢 Trigger LOCAL tracking (History & Top Tracks)
                         appContext?.let { ctx -> trackSongPlay(ctx, song) }
+
+                        // ✅ NEW: Trigger LAST.FM Scrobbling (Cloud Sync)
+                        appContext?.let { ctx ->
+                            CoroutineScope(Dispatchers.IO).launch {
+                                try {
+                                    com.ant.tunes.lastfm.LastFmRepository.scrobble(
+                                        context = ctx,
+                                        track   = song.title,
+                                        artist  = song.artist
+                                    )
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
+                            }
+                        }
                     }
 
                     _duration.value = player?.duration ?: 0L
@@ -222,6 +238,7 @@ object PlayerManager {
                         }
                     }
                 }
+
 
                 override fun onPlaybackStateChanged(state: Int) {
                     if (state == Player.STATE_ENDED && _isOfflineMode.value) {

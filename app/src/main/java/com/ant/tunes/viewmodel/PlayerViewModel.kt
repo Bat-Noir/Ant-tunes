@@ -1,28 +1,31 @@
 package com.ant.tunes.viewmodel
 
+import android.app.Application
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.ant.tunes.NewPipeHelper
 import com.ant.tunes.data.Song
+import com.ant.tunes.lastfm.LastFmAuthManager
+import com.ant.tunes.lastfm.LastFmRepository
 import com.ant.tunes.network.RetrofitClient
 import com.ant.tunes.player.PlayerManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
-import java.net.URLEncoder
-import com.ant.tunes.NewPipeHelper
 
-class PlayerViewModel : ViewModel() {
+data class LrcLine(val timeMs: Long, val text: String)
+class PlayerViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val appContext = application.applicationContext
+
 
     private var searchJob: Job? = null
 
@@ -58,8 +61,20 @@ class PlayerViewModel : ViewModel() {
     val isPlayerExpanded = mutableStateOf(false)
 
     // 🟢 NEW: LYRICS STATES
+    // 🟢 NEW: LYRICS STATES
     val currentLyrics = mutableStateOf<String?>(null)
     val isLyricsLoading = mutableStateOf(false)
+
+    // 🟢 ADDED: Timed Lyrics State
+    val currentLrcLines = mutableStateOf<List<LrcLine>>(emptyList())
+
+    data class LrcLine(val timeMs: Long, val text: String)
+
+    // 🟢 NEW: Last.fm states
+    val lastFmTopTracks = MutableStateFlow<List<Song>>(emptyList())
+    val lastFmRecentTracks = MutableStateFlow<List<Song>>(emptyList())
+    val isLastFmConnected = MutableStateFlow(false)
+
 
     // 🟢 THE ANTI-JUNK BOUNCER
     private fun isJunk(title: String, seedSong: Song): Boolean {
@@ -73,59 +88,135 @@ class PlayerViewModel : ViewModel() {
         return false
     }
 
-    // 🟢 LRCLIB UNIVERSAL LYRICS FETCHER
+    // 🟢 DUAL-SOURCE LYRICS FETCHER
     private fun fetchLyrics(song: Song?) {
         if (song == null) {
             currentLyrics.value = null
+            currentLrcLines.value = emptyList()
             return
         }
-
-        // Clean up title/artist so API finds matches easier (removes brackets like [Official Music Video])
-        val cleanTitle = song.title.replace(Regex("\\[.*?\\]|\\(.*?\\)"), "").trim()
-        val cleanArtist = song.artist.split(",").firstOrNull()?.trim() ?: song.artist
+        val cleanTitle = song.title
+            .replace(Regex("\\[.*?\\]|\\(.*?\\)"), "").trim()
+        val cleanArtist = song.artist.split(",")
+            .firstOrNull()?.trim() ?: song.artist
 
         viewModelScope.launch(Dispatchers.IO) {
+            isLyricsLoading.value = true
+            currentLyrics.value = null
+            currentLrcLines.value = emptyList()
+
+            // Try LRCLIB for synced lyrics first
             try {
-                isLyricsLoading.value = true
-                currentLyrics.value = null
+                val urlStr = "https://lrclib.net/api/get?track_name=${
+                    java.net.URLEncoder.encode(cleanTitle, "UTF-8")
+                }&artist_name=${
+                    java.net.URLEncoder.encode(cleanArtist, "UTF-8")
+                }"
+                val conn = java.net.URL(urlStr).openConnection()
+                        as java.net.HttpURLConnection
+                conn.setRequestProperty("User-Agent", "AntTunes/1.0")
+                conn.connectTimeout = 5000
+                conn.readTimeout = 5000
+                if (conn.responseCode == 200) {
+                    val resp = conn.inputStream.bufferedReader().readText()
+                    val json = org.json.JSONObject(resp)
 
-                val urlStr = "https://lrclib.net/api/get?track_name=${URLEncoder.encode(cleanTitle, "UTF-8")}&artist_name=${URLEncoder.encode(cleanArtist, "UTF-8")}"
-                val url = URL(urlStr)
-                val connection = url.openConnection() as HttpURLConnection
-                connection.requestMethod = "GET"
-                connection.setRequestProperty("User-Agent", "AntTunes/1.0 (Android)")
-                connection.connectTimeout = 5000
-                connection.readTimeout = 5000
-
-                if (connection.responseCode == 200) {
-                    val response = connection.inputStream.bufferedReader().use { it.readText() }
-                    val json = JSONObject(response)
-                    val plainLyrics = json.optString("plainLyrics", "")
-
-                    withContext(Dispatchers.Main) {
-                        if (plainLyrics.isNotBlank()) {
-                            currentLyrics.value = plainLyrics
-                        } else {
-                            currentLyrics.value = "No lyrics found for this track."
+                    // Try synced (LRC) first
+                    val syncedLyrics = json.optString("syncedLyrics", "")
+                    if (syncedLyrics.isNotBlank()) {
+                        val parsed = parseLrc(syncedLyrics)
+                        withContext(Dispatchers.Main) {
+                            currentLrcLines.value = parsed
+                            currentLyrics.value = parsed.joinToString("\n") { it.text }
+                            isLyricsLoading.value = false
                         }
+                        return@launch
                     }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        currentLyrics.value = "No lyrics found for this track."
+
+                    // Fallback to plain
+                    val plain = json.optString("plainLyrics", "")
+                    if (plain.isNotBlank()) {
+                        withContext(Dispatchers.Main) {
+                            currentLyrics.value = plain
+                            isLyricsLoading.value = false
+                        }
+                        return@launch
                     }
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                withContext(Dispatchers.Main) {
-                    currentLyrics.value = "Error fetching lyrics. Check connection."
+            } catch (e: Exception) { e.printStackTrace() }
+
+            // Fallback to lyrics.ovh
+            try {
+                val url = "https://api.lyrics.ovh/v1/${
+                    java.net.URLEncoder.encode(cleanArtist, "UTF-8")
+                }/${
+                    java.net.URLEncoder.encode(cleanTitle, "UTF-8")
+                }"
+                val conn = java.net.URL(url).openConnection()
+                        as java.net.HttpURLConnection
+                conn.connectTimeout = 5000
+                conn.readTimeout = 5000
+                if (conn.responseCode == 200) {
+                    val json = org.json.JSONObject(
+                        conn.inputStream.bufferedReader().readText()
+                    )
+                    val lyrics = json.optString("lyrics", "")
+                    if (lyrics.isNotBlank()) {
+                        withContext(Dispatchers.Main) {
+                            currentLyrics.value = lyrics
+                            isLyricsLoading.value = false
+                        }
+                        return@launch
+                    }
                 }
-            } finally {
-                withContext(Dispatchers.Main) {
-                    isLyricsLoading.value = false
-                }
+            } catch (e: Exception) { e.printStackTrace() }
+
+            withContext(Dispatchers.Main) {
+                currentLyrics.value = null
+                isLyricsLoading.value = false
             }
         }
     }
+
+    private suspend fun tryLrcLib(title: String, artist: String): String? {
+        return try {
+            val url = "https://lrclib.net/api/get?track_name=${
+                java.net.URLEncoder.encode(title, "UTF-8")
+            }&artist_name=${
+                java.net.URLEncoder.encode(artist, "UTF-8")
+            }"
+            val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+            conn.setRequestProperty("User-Agent", "AntTunes/1.0")
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+            if (conn.responseCode == 200) {
+                val json = org.json.JSONObject(
+                    conn.inputStream.bufferedReader().readText()
+                )
+                json.optString("plainLyrics", "").ifEmpty { null }
+            } else null
+        } catch (e: Exception) { null }
+    }
+
+    private suspend fun tryLyricsOvh(title: String, artist: String): String? {
+        return try {
+            val url = "https://api.lyrics.ovh/v1/${
+                java.net.URLEncoder.encode(artist, "UTF-8")
+            }/${
+                java.net.URLEncoder.encode(title, "UTF-8")
+            }"
+            val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+            if (conn.responseCode == 200) {
+                val json = org.json.JSONObject(
+                    conn.inputStream.bufferedReader().readText()
+                )
+                json.optString("lyrics", "").ifEmpty { null }
+            } else null
+        } catch (e: Exception) { null }
+    }
+
 
     // 🟢 REVIVE DEAD LINKS (Edo Tensei)
     fun playFreshTrack(context: android.content.Context, song: Song) {
@@ -357,12 +448,180 @@ class PlayerViewModel : ViewModel() {
         }
     }
 
+    // 🟢 PUBLIC FALLBACK — fetch trending from Last.fm public charts
+    fun fetchPublicCharts() {
+        viewModelScope.launch {
+            try {
+                // Last.fm top tracks chart — NO login needed
+                val url = "https://ws.audioscrobbler.com/2.0/?method=chart.getTopTracks&api_key=e2427f83cfff636cb919ccdc4db1b4c1&format=json&limit=20"
+                val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                connection.requestMethod = "GET"
+                if (connection.responseCode == 200) {
+                    val response = connection.inputStream.bufferedReader().readText()
+                    val json = org.json.JSONObject(response)
+                    val tracks = json.getJSONObject("tracks").getJSONArray("track")
+                    val publicSongs = mutableListOf<Song>()
+
+                    for (i in 0 until minOf(tracks.length(), 20)) {
+                        val t = tracks.getJSONObject(i)
+                        val name = t.getString("name")
+                        val artist = t.getJSONObject("artist").getString("name")
+                        // resolve to audio
+                        try {
+                            val searchResp = RetrofitClient.api.searchSongs(
+                                query = "$name $artist",
+                                page = 1, limit = 2
+                            )
+                            val best = searchResp.body()?.data?.results?.firstOrNull()
+                                ?: continue
+                            val audioUrl = best.downloadUrl.lastOrNull()?.url ?: continue
+                            publicSongs.add(
+                                Song(
+                                    id = best.id,
+                                    title = name,
+                                    artist = artist,
+                                    albumArt = best.image.lastOrNull()?.url ?: "",
+                                    streamUrl = audioUrl,
+                                    source = "saavn"
+                                )
+                            )
+                        } catch (e: Exception) { continue }
+                    }
+                    if (publicSongs.isNotEmpty()) {
+                        _publicCharts.value = publicSongs
+                    }
+                }
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+    }
+
+    private val _publicCharts = MutableStateFlow<List<Song>>(emptyList())
+    val publicCharts: StateFlow<List<Song>> = _publicCharts
+
+    fun fetchLastFmData() {
+        viewModelScope.launch {
+            isLastFmConnected.value = LastFmRepository.isLoggedIn(appContext)
+            if (!isLastFmConnected.value) return@launch
+
+            // Fetch top tracks
+            val topTracks = LastFmRepository.getTopTracks(appContext)
+            if (topTracks.isNotEmpty()) {
+                val resolved = topTracks.take(15).mapNotNull { lastFmTrack ->
+                    try {
+                        val query = "${lastFmTrack.name} ${lastFmTrack.artist}"
+                        val response = RetrofitClient.api.searchSongs(query = query, page = 1, limit = 3)
+                        val best = response.body()?.data?.results?.firstOrNull() ?: return@mapNotNull null
+                        val url = best.downloadUrl.lastOrNull()?.url ?: return@mapNotNull null
+
+                        Song(
+                            id = best.id,
+                            title = lastFmTrack.name,
+                            artist = lastFmTrack.artist,
+                            albumArt = lastFmTrack.imageUrl.ifEmpty { best.image.lastOrNull()?.url ?: "" },
+                            streamUrl = url,
+                            source = "saavn"
+                        )
+                    } catch (e: Exception) { null }
+                }
+                lastFmTopTracks.value = resolved
+
+                // 🔥 THE MISSING SPARK: Instantly generate the Discover row from their #1 Top Track!
+                if (resolved.isNotEmpty()) {
+                    loadLastFmRecommendations(resolved.first())
+                }
+            }
+
+
+            // Fetch recently played
+            val recent = LastFmRepository.getRecentTracks(appContext)
+            if (recent.isNotEmpty()) {
+                val resolved = recent.take(15).mapNotNull { track ->
+                    try {
+                        val query = "${track.name} ${track.artist}"
+                        val response = RetrofitClient.api.searchSongs(query = query, page = 1, limit = 3)
+                        val best = response.body()?.data?.results?.firstOrNull() ?: return@mapNotNull null
+                        val url = best.downloadUrl.lastOrNull()?.url ?: return@mapNotNull null
+
+                        Song(
+                            id = best.id,
+                            title = track.name,
+                            artist = track.artist,
+                            albumArt = track.imageUrl.ifEmpty { best.image.lastOrNull()?.url ?: "" },
+                            streamUrl = url,
+                            source = "saavn"
+                        )
+                    } catch (e: Exception) { null }
+                }
+                lastFmRecentTracks.value = resolved
+            }
+        }
+    }
+
+    // 🟢 Smart recommendations via Last.fm global similar tracks (NO LOGIN REQUIRED)
+    fun loadLastFmRecommendations(currentSong: Song) {
+        viewModelScope.launch {
+            // 🔥 We removed the login check! It just uses your API key now.
+            val similar = LastFmRepository.getSimilarTracks(track = currentSong.title, artist = currentSong.artist)
+            if (similar.isEmpty()) {
+                // If Last.fm fails to find similar songs, fallback to Saavn
+                loadMoreRecommendations(currentSong)
+                return@launch
+            }
+
+            val resolved = similar.mapNotNull { track ->
+                try {
+                    val query = "${track.name} ${track.artist}"
+                    val response = RetrofitClient.api.searchSongs(query = query, page = 1, limit = 3)
+                    val best = response.body()?.data?.results?.firstOrNull() ?: return@mapNotNull null
+                    val url = best.downloadUrl.lastOrNull()?.url ?: return@mapNotNull null
+
+                    Song(
+                        id = best.id,
+                        title = track.name,
+                        artist = track.artist,
+                        albumArt = best.image.lastOrNull()?.url ?: "",
+                        streamUrl = url,
+                        source = "saavn"
+                    )
+                } catch (e: Exception) { null }
+            }
+
+            if (resolved.isNotEmpty()) {
+                val combined = (_recommendedSongs.value + resolved).distinctBy { it.id }
+                _recommendedSongs.value = combined
+                PlayerManager.addToQueue(resolved)
+            }
+        }
+    }
+
+    private fun parseLrc(lrc: String): List<LrcLine> {
+        val lines = mutableListOf<LrcLine>()
+        // Regex to capture [mm:ss.xx] format
+        val regex = Regex("\\[(\\d{2}):(\\d{2})\\.(\\d{2,3})\\](.*)")
+        lrc.lines().forEach { line ->
+            val match = regex.find(line) ?: return@forEach
+            val (min, sec, ms, text) = match.destructured
+            val timeMs = (min.toLong() * 60 * 1000) +
+                    (sec.toLong() * 1000) +
+                    (ms.padEnd(3, '0').toLong())
+            lines.add(LrcLine(timeMs, text.trim()))
+        }
+        return lines.sortedBy { it.timeMs }
+    }
+
     init {
-        PlayerManager.onNeedMoreSongs = { seedSong ->
-            loadMoreRecommendations(seedSong)
+        // Load Last.fm private data ONLY if they bothered to log in
+        if (LastFmAuthManager.isLoggedIn.value) {
+            fetchLastFmData()
+            fetchPublicCharts()
         }
 
-        // 🟢 AUTO-FETCH LYRICS: Observes song changes and fetches lyrics silently
+        // 🔥 ALWAYS use Last.fm for the queue, logged in or not!
+        PlayerManager.onNeedMoreSongs = { seedSong ->
+            loadLastFmRecommendations(seedSong)
+        }
+
+        // 🟢 AUTO-FETCH LYRICS
         viewModelScope.launch {
             PlayerManager.currentSong.collect { song ->
                 fetchLyrics(song)

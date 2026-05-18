@@ -220,6 +220,7 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
                             Row(
                                 modifier = Modifier.fillMaxWidth().clickable(enabled = !isAdded) {
                                     playlist.tracks.add(songToAddToPlaylist!!)
+                                    com.ant.tunes.player.AppDataManager.savePlaylists(context, globalPlaylists)
                                     Toast.makeText(context, "Added to ${playlist.name.value}", Toast.LENGTH_SHORT).show()
                                     songToAddToPlaylist = null
                                 }.padding(vertical = 12.dp),
