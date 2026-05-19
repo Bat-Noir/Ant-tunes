@@ -11,14 +11,18 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import com.ant.tunes.data.DownloadState
 import com.ant.tunes.data.Song
+import com.ant.tunes.data.SourceType
 import com.ant.tunes.service.MusicService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -49,6 +53,10 @@ object PlayerManager {
 
     private val _isPlaying = MutableStateFlow(false)
     val isPlayingFlow: StateFlow<Boolean> = _isPlaying
+
+    // 🟢 ADDED: Buffering State
+    private val _isBuffering = MutableStateFlow(false)
+    val isBuffering: StateFlow<Boolean> = _isBuffering
 
     private val _currentPosition = MutableStateFlow(0L)
     val currentPosition: StateFlow<Long> = _currentPosition
@@ -177,12 +185,18 @@ object PlayerManager {
             // 🟢 Inject the Cache DataSource Factory
             val dataSourceFactory = CacheManager.getCacheDataSourceFactory(context)
 
-            player = ExoPlayer.Builder(context)
-                .setMediaSourceFactory(
-                    androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context)
-                        .setDataSourceFactory(dataSourceFactory)
+            // 🟢 NATIVE FIX: Handles Audio Focus, Phone Calls, and BT/Headphone disconnects!
+            player = androidx.media3.exoplayer.ExoPlayer.Builder(context)
+                .setAudioAttributes(
+                    androidx.media3.common.AudioAttributes.Builder()
+                        .setUsage(androidx.media3.common.C.USAGE_MEDIA)
+                        .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_MUSIC)
+                        .build(),
+                    true // handleAudioFocus
                 )
+                .setHandleAudioBecomingNoisy(true) // Pauses on headphone/BT unplug
                 .build()
+
 
 
             player?.repeatMode = Player.REPEAT_MODE_OFF
@@ -196,51 +210,51 @@ object PlayerManager {
                     _isPlaying.value = isPlaying
                 }
 
-                override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
+                override fun onMediaItemTransition(item: androidx.media3.common.MediaItem?, reason: Int) {
                     val index = player?.currentMediaItemIndex ?: 0
                     currentIndex = index
 
                     val currentList = _playlistFlow.value
-                    val newCurrentSong = currentList.getOrNull(index)
-                    _currentSong.value = newCurrentSong
+                    val newSong = currentList.getOrNull(index)
 
-                    newCurrentSong?.let { song ->
-                        playedSongFingerprints.add(generateFingerprint(song))
+                    // ✅ Only update if actually different song OR it's a fresh play
+                    if (newSong?.id != _currentSong.value?.id ||
+                        reason == androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_SEEK) {
+                        _currentSong.value = newSong
+                    }
 
-                        // 🟢 Trigger LOCAL tracking (History & Top Tracks)
-                        appContext?.let { ctx -> trackSongPlay(ctx, song) }
-
-                        // ✅ NEW: Trigger LAST.FM Scrobbling (Cloud Sync)
-                        appContext?.let { ctx ->
-                            CoroutineScope(Dispatchers.IO).launch {
-                                try {
-                                    com.ant.tunes.lastfm.LastFmRepository.scrobble(
-                                        context = ctx,
-                                        track   = song.title,
-                                        artist  = song.artist
-                                    )
-                                } catch (e: Exception) {
-                                    e.printStackTrace()
-                                }
-                            }
-                        }
+                    // ✅ For repeat ONE — keep same song metadata
+                    if (reason == androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
+                        // Don't change currentSong, just reset position display
+                        _currentPosition.value = 0L
+                        return
                     }
 
                     _duration.value = player?.duration ?: 0L
                     savePlaybackState(context)
 
                     val remaining = _playlistFlow.value.size - currentIndex
-
-                    if (!_isOfflineMode.value && remaining <= 2 && currentIndex != lastLoadTriggerIndex) {
+                    if (!_isOfflineMode.value && remaining <= 2 &&
+                        currentIndex != lastLoadTriggerIndex) {
                         lastLoadTriggerIndex = currentIndex
-                        _currentSong.value?.let { currentTrack ->
-                            onNeedMoreSongs?.invoke(currentTrack)
+                        _currentSong.value?.artist?.let { artistName ->
+                            onNeedMoreSongs?.invoke(
+                                com.ant.tunes.data.Song(
+                                    id = _currentSong.value?.id ?: "",
+                                    title = _currentSong.value?.title ?: "",
+                                    artist = artistName,
+                                    albumArt = ""
+                                )
+                            )
                         }
                     }
                 }
 
 
+
                 override fun onPlaybackStateChanged(state: Int) {
+                    // 🟢 ADDED: Track buffering state
+                    _isBuffering.value = state == Player.STATE_BUFFERING
                     if (state == Player.STATE_ENDED && _isOfflineMode.value) {
                         when (_repeatMode.value) {
                             RepeatMode.ONE -> {
@@ -394,6 +408,7 @@ object PlayerManager {
             .putInt("index", currentIndex)
             .putLong("position", player?.currentPosition ?: 0L)
             .putBoolean("offline", _isOfflineMode.value)
+            .putBoolean("was_playing", player?.isPlaying == true) // ✅ ADDED
             .apply()
     }
 
@@ -467,7 +482,12 @@ object PlayerManager {
     }
 
     fun downloadSong(context: Context, song: Song) {
+        // 🟢 UX FIX: Don't re-download if it's already working or done
         if (_downloadStates[song.id] == DownloadState.DOWNLOADING) return
+        if (_downloadStates[song.id] == DownloadState.DOWNLOADED) return
+
+        // ... rest of your existing download code ...
+
 
         _downloadStates[song.id] = DownloadState.DOWNLOADING
         _downloadProgress[song.id] = 0f
@@ -540,34 +560,49 @@ object PlayerManager {
     }
 
     fun play(context: Context, songs: List<Song>, index: Int) {
+        // 🟢 UX FIX: Instantly update UI and trigger the loading shimmer!
+        _currentSong.value = songs.getOrNull(index)
+        _isBuffering.value = true
+
         val intent = Intent(context, MusicService::class.java)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             context.startForegroundService(intent)
-        } else {
-            context.startService(intent)
-        }
+        } else context.startService(intent)
 
         _isOfflineMode.value = false
-        playedSongFingerprints.clear()
-
         playlist = songs
         _playlistFlow.value = songs
         currentIndex = index
 
-        val mediaItems = songs.map { song ->
-            if (song.source == "gaana") {
-                MediaItem.Builder().setUri(song.streamUrl).setMimeType("application/x-mpegURL").build()
-            } else {
-                MediaItem.fromUri(song.streamUrl)
+        CoroutineScope(Dispatchers.IO).launch {
+            // ✅ Resolve stream URLs before playing
+            val resolvedItems = songs.mapIndexed { i, song ->
+                async {
+                    val url = PlaybackRepository.getFreshStreamUrl(context, song)
+                        ?: song.streamUrl // fallback to stored URL
+                    i to url
+                }
+            }.awaitAll().sortedBy { it.first }
+
+            val mediaItems = resolvedItems.mapIndexed { i, (_, url) ->
+                val song = songs[i]
+                when (song.resolvedSourceType()) {
+                    SourceType.GAANA -> MediaItem.Builder()
+                        .setUri(url)
+                        .setMimeType("application/x-mpegURL")
+                        .build()
+                    else -> MediaItem.fromUri(url)
+                }
+            }
+
+            withContext(Dispatchers.Main) {
+                player?.setMediaItems(mediaItems)
+                player?.prepare()
+                player?.seekTo(index, 0)
+                player?.play()
+                // 🟢 Deleted the delayed UI update from down here!
             }
         }
-
-        player?.setMediaItems(mediaItems)
-        player?.prepare()
-        player?.seekTo(index, 0)
-        player?.play()
-        _duration.value = player?.duration ?: 0L
-        _currentSong.value = songs.getOrNull(index)
     }
 
     fun addToQueue(newSongs: List<Song>) {
@@ -598,42 +633,74 @@ object PlayerManager {
         player?.addMediaItems(mediaItems)
     }
 
+    // 🟢 NEW: Inserts song exactly after the current playing song
+    fun insertNext(song: Song, context: Context) {
+        if (playlist.isEmpty() || player == null) {
+            play(context, listOf(song), 0)
+            return
+        }
+
+        val insertIndex = currentIndex + 1
+
+        // 1. Update our internal UI list
+        val mutableList = playlist.toMutableList()
+        mutableList.add(insertIndex, song)
+        playlist = mutableList
+        _playlistFlow.value = playlist
+
+        // 2. Resolve URL and add to the background ExoPlayer
+        CoroutineScope(Dispatchers.IO).launch {
+            val url = PlaybackRepository.getFreshStreamUrl(context, song) ?: song.streamUrl
+            val mediaItem = when (song.resolvedSourceType()) {
+                SourceType.GAANA -> androidx.media3.common.MediaItem.Builder().setUri(url).setMimeType("application/x-mpegURL").build()
+                else -> androidx.media3.common.MediaItem.fromUri(url)
+            }
+
+            withContext(Dispatchers.Main) {
+                player?.addMediaItem(insertIndex, mediaItem)
+            }
+        }
+    }
+
     fun playStream(context: Context, song: Song) {
+        // 🟢 UX FIX: Instantly update UI and trigger the loading shimmer!
+        _currentSong.value = song
+        _isBuffering.value = true
+
         val intent = Intent(context, MusicService::class.java)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             context.startForegroundService(intent)
-        } else {
-            context.startService(intent)
-        }
+        } else context.startService(intent)
 
-        playedSongFingerprints.clear()
+        CoroutineScope(Dispatchers.IO).launch {
+            val url = PlaybackRepository.getFreshStreamUrl(context, song)
+                ?: song.streamUrl
 
-        if (song.isDownloaded) {
-            _isOfflineMode.value = true
-            playlist = _downloadedSongs.value
-            _playlistFlow.value = playlist
-            currentIndex = playlist.indexOfFirst { it.id == song.id }
-            val mediaItems = playlist.map { MediaItem.fromUri(it.localPath) }
-            player?.setMediaItems(mediaItems)
-            player?.prepare()
-            player?.seekTo(currentIndex, 0)
-            player?.play()
-        } else {
-            _isOfflineMode.value = false
-            playlist = _playlistFlow.value.ifEmpty { listOf(song) }
-            _playlistFlow.value = playlist
-            currentIndex = 0
-            val mediaItem = if (song.source == "gaana") {
-                MediaItem.Builder().setUri(song.streamUrl).setMimeType("application/x-mpegURL").build()
-            } else {
-                MediaItem.fromUri(song.streamUrl)
+            withContext(Dispatchers.Main) {
+                if (song.isDownloaded) {
+                    _isOfflineMode.value = true
+                    playlist = _downloadedSongs.value
+                    _playlistFlow.value = playlist
+                    currentIndex = playlist.indexOfFirst { it.id == song.id }
+                } else {
+                    _isOfflineMode.value = false
+                }
+
+                val mediaItem = when (song.resolvedSourceType()) {
+                    SourceType.GAANA -> MediaItem.Builder()
+                        .setUri(url)
+                        .setMimeType("application/x-mpegURL")
+                        .build()
+                    else -> MediaItem.fromUri(url)
+                }
+
+                player?.setMediaItem(mediaItem)
+                player?.prepare()
+                player?.play()
             }
-            player?.setMediaItem(mediaItem)
-            player?.prepare()
-            player?.play()
         }
-        _currentSong.value = song
     }
+
 
     fun togglePlayPause() {
         player?.let {
@@ -665,11 +732,15 @@ object PlayerManager {
     }
 
     fun restorePlayback(context: Context) {
+        // 🟢 FIXED: If a song is already loaded or actively playing, exit immediately and change nothing!
+        if (_currentSong.value != null) return
+
         val prefs = context.getSharedPreferences("player_state", Context.MODE_PRIVATE)
         val json = prefs.getString("playlist", null) ?: return
         val index = prefs.getInt("index", 0)
         val position = prefs.getLong("position", 0L)
         val isOffline = prefs.getBoolean("offline", false)
+        val wasPlaying = prefs.getBoolean("was_playing", false)
 
         val jsonArray = JSONArray(json)
         val songs = mutableListOf<Song>()
@@ -705,8 +776,15 @@ object PlayerManager {
         player?.setMediaItems(mediaItems)
         player?.prepare()
         player?.seekTo(index, position)
+
+        // ✅ Only auto-resume if was actually playing before it closed
+        if (wasPlaying) {
+            player?.play()
+        }
+
         _currentSong.value = songs.getOrNull(index)
     }
+
 
     fun startProgressUpdates() {
         progressJob?.cancel()

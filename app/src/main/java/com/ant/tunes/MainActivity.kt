@@ -26,9 +26,16 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 🟢 RUN PLAYLIST MIGRATION ON BOOT
+        com.ant.tunes.player.PlaylistMigration.runIfNeeded(this)
         enableEdgeToEdge()
-        PlayerManager.init(this)
-        PlayerManager.restorePlayback(this)
+        // 🟢 FIXED: Check the public 'currentSong.value' instead of the private 'player'
+        // This perfectly protects your background session without crashing the compiler!
+        if (com.ant.tunes.player.PlayerManager.currentSong.value == null) {
+            com.ant.tunes.player.PlayerManager.init(this)
+            com.ant.tunes.player.PlayerManager.restorePlayback(this)
+        }
+
         // ✅ restore liked songs + playlists from disk
         com.ant.tunes.ui.initGlobalData(this)
         LastFmAuthManager.init(this)
@@ -39,15 +46,25 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // 🟢 NEW: The Last.fm Catcher! Grabs the user when the browser sends them back
+    // 🟢 CATCHES THE DEEP LINK WHEN BROWSER CLOSES
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        handleLastFmIntent(intent)
+    }
+
     override fun onResume() {
         super.onResume()
-        val token = getSharedPreferences("ant_prefs", Context.MODE_PRIVATE).getString("lastfm_token", null)
-        if (token != null && !LastFmAuthManager.isLoggedIn.value) {
-            lifecycleScope.launch {
-                val success = LastFmAuthManager.completeAuth(this@MainActivity)
-                if (success) {
-                    // refresh Last.fm data
+        handleLastFmIntent(intent)
+    }
+
+    private fun handleLastFmIntent(intent: android.content.Intent?) {
+        val uri = intent?.data
+        if (uri != null && uri.scheme == "anttunes" && uri.host == "lastfm") {
+            val token = uri.getQueryParameter("token")
+            if (token != null) {
+                intent.data = null // Clear the intent so it doesn't loop
+                lifecycleScope.launch {
+                    com.ant.tunes.lastfm.LastFmAuthManager.completeAuth(this@MainActivity, token)
                 }
             }
         }
@@ -76,6 +93,9 @@ fun AntTunesApp() {
     }
 
     val isPlayerExpanded by vm.isPlayerExpanded
+    // 🟢 ADDED: We need isPlaying for the global MiniPlayer
+    val isPlaying by PlayerManager.isPlayingFlow.collectAsState()
+
     var showOnboarding by remember { mutableStateOf(!prefs.getBoolean("onboarded", false)) }
     var userName by remember { mutableStateOf(prefs.getString("user_name", "") ?: "") }
     var showProfile by remember { mutableStateOf(false) }
@@ -112,9 +132,7 @@ fun AntTunesApp() {
         AmbientBlobs()
 
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(bottom = if (isPlayerExpanded) 0.dp else 80.dp)
+            modifier = Modifier.fillMaxSize() // 🟢 FIXED: Let it fill the whole screen!
         ) {
             when (currentTab) {
                 NavTab.HOME    -> PlayerScreen(onOpenProfile = { showProfile = true })
@@ -123,20 +141,47 @@ fun AntTunesApp() {
             }
         }
 
-        // 🟢 FIXED: Hides BottomNav when Player is expanded, Search UI is active, OR a Library sub-screen is open
-        val hideBottomNav = isPlayerExpanded ||
-                (currentTab == NavTab.SEARCH && IsSearchUIActive) ||
-                (currentTab == NavTab.LIBRARY && IsLibrarySubScreenActive)
 
-        if (!hideBottomNav) {
-            BottomNav(
-                selected = currentTab,
-                onSelect = { currentTab = it },
+        // 🟢 Hides Navs when Player is expanded, Search UI is active, OR a Library/Home sub-screen is open
+        val hideBottomNav = isPlayerExpanded ||
+                (currentTab == NavTab.SEARCH && com.ant.tunes.ui.IsSearchUIActive) ||
+                (currentTab == NavTab.LIBRARY && com.ant.tunes.ui.IsLibrarySubScreenActive) ||
+                (currentTab == NavTab.HOME && com.ant.tunes.ui.IsHomeSubScreenActive)
+
+        // 🟢 FIXED: ONE single AnimatedVisibility block controls BOTH the Mini Player and the Bottom Nav.
+        // They are glued together and will slide up and down flawlessly as a single unit.
+        androidx.compose.animation.AnimatedVisibility(
+            visible = !hideBottomNav,
+            enter = androidx.compose.animation.slideInVertically { it },
+            exit = androidx.compose.animation.slideOutVertically { it },
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            Column(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 14.dp)
-                    .navigationBarsPadding()
-            )
+                    .fillMaxWidth()
+                    .navigationBarsPadding(),
+                verticalArrangement = Arrangement.Bottom,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // ── GLOBAL MINI PLAYER ──
+                MiniPlayerBar(
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp)
+                        .padding(bottom = 8.dp),
+                    onClick = {
+                        currentTab = NavTab.HOME
+                        RequestFullScreenPlayer = true
+                    },
+                    isPlaying = isPlaying
+                )
+
+                // ── BOTTOM NAV ──
+                BottomNav(
+                    selected = currentTab,
+                    onSelect = { currentTab = it },
+                    modifier = Modifier.padding(bottom = 7.dp)
+                )
+            }
         }
-    }
-}
+    } // <-- End of main Box
+} // <-- End of AntTunesApp

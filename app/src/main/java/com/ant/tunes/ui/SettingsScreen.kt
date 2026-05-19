@@ -220,7 +220,7 @@ fun SettingsScreen(onClose: () -> Unit) {
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp)) {
                     Text("Version", style = MaterialTheme.typography.titleMedium, color = AntText)
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text("v4.0 — AMOLED Edition", style = MaterialTheme.typography.bodyMedium, color = AntText2)
+                    Text("v5.0 — AMOLED Edition", style = MaterialTheme.typography.bodyMedium, color = AntText2)
                 }
                 HorizontalDivider(color = AntGlassBorder, thickness = 1.dp)
                 Row(

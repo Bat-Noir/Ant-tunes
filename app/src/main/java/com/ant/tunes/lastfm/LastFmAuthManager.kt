@@ -22,25 +22,22 @@ object LastFmAuthManager {
         _username.value   = LastFmRepository.getUsername(context)
     }
 
-    // Step 1 — open Last.fm auth in browser
-    suspend fun startAuth(context: Context): String? {
-        val token = LastFmRepository.getToken() ?: return null
-        // save token for later
-        context.getSharedPreferences("ant_prefs", Context.MODE_PRIVATE)
-            .edit().putString("lastfm_token", token).apply()
-
-        val authUrl = "https://www.last.fm/api/auth/?api_key=${API_KEY}&token=${token}"
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(authUrl))
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
-        return token
+    // 🟢 Step 1 — Open browser WITH the deep link callback
+    fun startAuth(context: Context) {
+        try {
+            val cb = "anttunes://lastfm" // MUST match AndroidManifest.xml
+            val authUrl = "https://www.last.fm/api/auth/?api_key=${API_KEY}&cb=${cb}"
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(authUrl))
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(context, "Failed to open browser", android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
-    // Step 2 — called after user returns from browser
-    suspend fun completeAuth(context: Context): Boolean {
-        val token = context.getSharedPreferences("ant_prefs", Context.MODE_PRIVATE)
-            .getString("lastfm_token", null) ?: return false
-
+    // 🟢 Step 2 — Called by MainActivity passing the EXACT token from the URL
+    suspend fun completeAuth(context: Context, token: String): Boolean {
+        // We use the token passed directly from the Deep Link, no more SharedPreferences!
         val result = LastFmRepository.getSession(token) ?: return false
         val (username, sessionKey) = result
 

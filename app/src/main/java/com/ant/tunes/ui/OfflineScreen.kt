@@ -123,8 +123,10 @@ fun OfflineScreen(onBack: () -> Unit) {
                     // PLAY ALL
                     Button(
                         onClick = {
-                            if (songs.isNotEmpty())
+                            if (songs.isNotEmpty()) {
                                 PlayerManager.play(context, songs, 0)
+                                com.ant.tunes.ui.RequestFullScreenPlayer = true // 🟢 ADDED
+                            }
                         },
                         modifier = Modifier.weight(1f).height(48.dp),
                         shape = RoundedCornerShape(24.dp),
@@ -145,6 +147,7 @@ fun OfflineScreen(onBack: () -> Unit) {
                             if (songs.isNotEmpty()) {
                                 val shuffled = songs.shuffled()
                                 PlayerManager.play(context, shuffled, 0)
+                                com.ant.tunes.ui.RequestFullScreenPlayer = true // 🟢 ADDED
                             }
                         },
                         modifier = Modifier.weight(1f).height(48.dp),
@@ -230,14 +233,17 @@ fun OfflineScreen(onBack: () -> Unit) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(
-                            // 🟢 Replaced AntBlueUltra with accent variation
                             if (isCurrent) accent.copy(alpha = 0.08f) else Color.Transparent
                         )
-                        .clickable { PlayerManager.play(context, songs, index) }
+                        .clickable {
+                            PlayerManager.play(context, songs, index)
+                            com.ant.tunes.ui.RequestFullScreenPlayer = true // 🟢 ADDED
+                        }
                         .padding(horizontal = 20.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // track number or eq bars
+
+                // track number or eq bars
                     Box(
                         modifier = Modifier.width(24.dp),
                         contentAlignment = Alignment.Center

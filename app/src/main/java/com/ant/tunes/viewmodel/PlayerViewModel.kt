@@ -180,22 +180,76 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private suspend fun tryLrcLib(title: String, artist: String): String? {
         return try {
-            val url = "https://lrclib.net/api/get?track_name=${
+            // ✅ Use search endpoint for better accuracy
+            val searchUrl = "https://lrclib.net/api/search?track_name=${
                 java.net.URLEncoder.encode(title, "UTF-8")
             }&artist_name=${
                 java.net.URLEncoder.encode(artist, "UTF-8")
             }"
-            val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+            val conn = java.net.URL(searchUrl).openConnection() as java.net.HttpURLConnection
             conn.setRequestProperty("User-Agent", "AntTunes/1.0")
             conn.connectTimeout = 5000
             conn.readTimeout = 5000
+
             if (conn.responseCode == 200) {
-                val json = org.json.JSONObject(
-                    conn.inputStream.bufferedReader().readText()
-                )
-                json.optString("plainLyrics", "").ifEmpty { null }
+                val resp = conn.inputStream.bufferedReader().readText()
+                val arr = org.json.JSONArray(resp)
+                if (arr.length() == 0) return null
+
+                // ✅ Find best match by title AND artist similarity
+                var bestMatch: org.json.JSONObject? = null
+                var bestScore = 0.0
+
+                for (i in 0 until arr.length()) {
+                    val item = arr.getJSONObject(i)
+                    val itemTitle = item.optString("trackName", "").lowercase()
+                    val itemArtist = item.optString("artistName", "").lowercase()
+
+                    val titleScore = similarity(itemTitle, title.lowercase())
+                    val artistScore = similarity(itemArtist, artist.lowercase())
+                    val score = titleScore * 0.6 + artistScore * 0.4
+
+                    if (score > bestScore) {
+                        bestScore = score
+                        bestMatch = item
+                    }
+                }
+
+                // ✅ Only use if confident (score > 0.7)
+                if (bestScore > 0.7 && bestMatch != null) {
+                    val lyrics = bestMatch.optString("plainLyrics", "").ifBlank { null }
+                    android.util.Log.d("Lyrics", "Match score: $bestScore for $title")
+                    lyrics
+                } else {
+                    android.util.Log.d("Lyrics", "No confident match (score=$bestScore) for $title by $artist")
+                    null
+                }
             } else null
         } catch (e: Exception) { null }
+    }
+
+    // ── MATH HELPERS FOR LYRICS MATCHING ──
+    // Simple similarity score 0.0-1.0
+    private fun similarity(a: String, b: String): Double {
+        if (a == b) return 1.0
+        if (a.isEmpty() || b.isEmpty()) return 0.0
+        val longer = if (a.length > b.length) a else b
+        val shorter = if (a.length > b.length) b else a
+        if (longer.contains(shorter)) return shorter.length.toDouble() / longer.length
+        // Levenshtein-based
+        val editDist = levenshtein(a, b)
+        return (longer.length - editDist).toDouble() / longer.length
+    }
+
+    private fun levenshtein(a: String, b: String): Int {
+        val dp = Array(a.length + 1) { IntArray(b.length + 1) }
+        for (i in 0..a.length) dp[i][0] = i
+        for (j in 0..b.length) dp[0][j] = j
+        for (i in 1..a.length) for (j in 1..b.length) {
+            dp[i][j] = if (a[i-1] == b[j-1]) dp[i-1][j-1]
+            else 1 + minOf(dp[i-1][j], dp[i][j-1], dp[i-1][j-1])
+        }
+        return dp[a.length][b.length]
     }
 
     private suspend fun tryLyricsOvh(title: String, artist: String): String? {

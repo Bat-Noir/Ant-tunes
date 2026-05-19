@@ -59,7 +59,40 @@ object CacheManager {
         return simpleCache!!
     }
 
-    // 🟢 CREATE CACHE DATASOURCE FACTORY
+    // ── ISSUE 4: Smart Cache Checking ──
+    fun isFullyCached(context: Context, url: String): Boolean {
+        return try {
+            val key = url.replace(Regex("[^a-zA-Z0-9]"), "") // Basic token strip
+            // Assuming you use md5 or just the stripped key for filename
+            val cacheFile = java.io.File(context.cacheDir, "$key.mp3")
+            // Check file exists AND is > 50KB (real song, not a dead 1KB link)
+            cacheFile.exists() && cacheFile.length() > 50_000
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // ── ISSUE 5: Individual Cache Management ──
+    fun deleteCachedSong(context: Context, url: String): Boolean {
+        return try {
+            val key = url.replace(Regex("[^a-zA-Z0-9]"), "")
+            val file = java.io.File(context.cacheDir, "$key.mp3")
+            if (file.exists()) file.delete() else false
+        } catch (e: Exception) { false }
+    }
+
+    fun getCachedSongSize(context: Context, url: String): Long {
+        val key = url.replace(Regex("[^a-zA-Z0-9]"), "")
+        val file = java.io.File(context.cacheDir, "$key.mp3")
+        return if (file.exists()) file.length() else 0L
+    }
+
+    fun formatSize(bytes: Long): String = when {
+        bytes > 1_000_000 -> "%.1f MB".format(bytes / 1_000_000.0)
+        bytes > 1_000     -> "%.0f KB".format(bytes / 1_000.0)
+        else              -> "$bytes B"
+    }
+
     // 🟢 2. THE ENGINE FIX: Direct HTTP Fetcher to bypass Cloudflare
     // 🟢 CREATE CACHE DATASOURCE FACTORY
     fun getCacheDataSourceFactory(context: Context): DataSource.Factory {

@@ -11,8 +11,8 @@ android {
         applicationId = "com.ant.tunes"
         minSdk = 24
         targetSdk = 36
-        versionCode = 4
-        versionName = "4.0"
+        versionCode = 5
+        versionName = "5.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -47,6 +47,10 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.3.1")
     implementation("androidx.media3:media3-common:1.3.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
+    val room_version = "2.6.1"
+    implementation("androidx.room:room-runtime:$room_version")
+    implementation("androidx.room:room-ktx:$room_version")
+
 
     // NewPipe Extractor
     implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.1")
@@ -80,6 +84,7 @@ dependencies {
     // --- COROUTINES ---
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation(libs.androidx.compose.foundation)
+    implementation(libs.androidx.compose.foundation.layout)
 
     // --- TESTING ---
     testImplementation(libs.junit)

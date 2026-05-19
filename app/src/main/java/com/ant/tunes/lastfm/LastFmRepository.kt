@@ -177,29 +177,93 @@ object LastFmRepository {
         }
     }
 
-    suspend fun getUserPlaylists(context: Context): List<LastFmPlaylistItem> =
-        withContext(Dispatchers.IO) {
-            val username = getUsername(context) ?: return@withContext emptyList()
+    // 🟢 Fetch user's playlists via XSPF endpoint (no auth needed!)
+    // 🟢 UPDATED: Now requires context to inject the Session Key
+    // 🟢 FIXED: Removed the Session Key trap and cleaned the username
+    suspend fun getUserPlaylistsDirect(context: android.content.Context): List<LastFmPlaylistItem> =
+        withContext(kotlinx.coroutines.Dispatchers.IO) {
+            // Strip "@" just in case the UI accidentally saved it
+            val rawUsername = getUsername(context)?.removePrefix("@") ?: return@withContext emptyList()
+
             try {
-                val response = api.getUserPlaylists(
-                    user = username,
-                    apiKey = API_KEY
-                )
-                response.body()?.playlists?.playlist ?: emptyList()
+                // Public playlists only need the username and API key!
+                val url = "https://ws.audioscrobbler.com/2.0/?method=user.getPlaylists" +
+                        "&user=${java.net.URLEncoder.encode(rawUsername, "UTF-8")}" +
+                        "&api_key=${API_KEY}" +
+                        "&format=json"
+
+                android.util.Log.d("LastFm", "Fetching playlists for: $rawUsername")
+                val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                conn.setRequestProperty("User-Agent", "AntTunes/1.0 (Android)")
+                conn.connectTimeout = 10000
+                conn.readTimeout = 10000
+
+                val code = conn.responseCode
+                if (code == 200) {
+                    val resp = conn.inputStream.bufferedReader().readText()
+                    val json = org.json.JSONObject(resp)
+
+                    if (json.has("error")) return@withContext emptyList()
+
+                    val playlistsObj = json.optJSONObject("playlists") ?: return@withContext emptyList()
+                    val arr = playlistsObj.optJSONArray("playlist")
+
+                    if (arr != null) {
+                        (0 until arr.length()).mapNotNull { i ->
+                            val p = arr.getJSONObject(i)
+                            LastFmPlaylistItem(
+                                id    = p.optString("id").ifBlank { null },
+                                title = p.optString("title").ifBlank { "Playlist" },
+                                size  = p.optString("size"),
+                                image = null
+                            )
+                        }
+                    } else {
+                        val single = playlistsObj.optJSONObject("playlist")
+                        if (single != null) {
+                            listOf(
+                                LastFmPlaylistItem(
+                                    id    = single.optString("id").ifBlank { null },
+                                    title = single.optString("title").ifBlank { "Playlist" },
+                                    size  = single.optString("size"),
+                                    image = null
+                                )
+                            )
+                        } else emptyList()
+                    }
+                } else emptyList()
             } catch (e: Exception) {
-                Log.e("LastFm", "getUserPlaylists failed: ${e.message}")
                 emptyList()
             }
         }
 
-    suspend fun getPlaylistTracks(playlistId: String): List<PlaylistTrackItem> =
+    // 🟢 Fetch tracks for a playlist via XSPF
+    suspend fun getPlaylistTracksDirect(playlistId: String): List<PlaylistTrackItem> =
         withContext(Dispatchers.IO) {
             try {
-                val response = api.getPlaylistTracks(
-                    playlistId = playlistId,
-                    apiKey = API_KEY
-                )
-                response.body()?.playlist?.track ?: emptyList()
+                val url = "https://ws.audioscrobbler.com/2.0/?method=playlist.fetch&playlistid=${playlistId}&api_key=${API_KEY}&format=json"
+                val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                conn.setRequestProperty("User-Agent", "AntTunes/1.0")
+                conn.connectTimeout = 8000
+                conn.readTimeout = 8000
+
+                if (conn.responseCode == 200) {
+                    val resp = conn.inputStream.bufferedReader().readText()
+                    val json = org.json.JSONObject(resp)
+                    val playlist = json.optJSONObject("playlist")
+                        ?: return@withContext emptyList()
+                    val trackArr = playlist.optJSONArray("track")
+                        ?: return@withContext emptyList()
+
+                    (0 until trackArr.length()).mapNotNull { i ->
+                        val t = trackArr.getJSONObject(i)
+                        PlaylistTrackItem(
+                            name    = t.optString("title").ifBlank { t.optString("name") },
+                            creator = t.optString("creator").ifBlank { t.optString("artist") },
+                            image   = null
+                        )
+                    }
+                } else emptyList()
             } catch (e: Exception) {
                 Log.e("LastFm", "getPlaylistTracks failed: ${e.message}")
                 emptyList()

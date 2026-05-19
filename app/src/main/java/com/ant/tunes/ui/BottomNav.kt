@@ -34,10 +34,10 @@ fun BottomNav(
             .padding(horizontal = 16.dp)
             .height(72.dp)
             .clip(RoundedCornerShape(36.dp))
-            .background(Color(0xD0080808))
+            .background(AntBlack.copy(alpha = 0.85f))
             .border(
                 width = 1.dp,
-                color = Color.White.copy(alpha = 0.10f),
+                color = Color.White.copy(alpha = 0.30f),
                 shape = RoundedCornerShape(36.dp)
             ),
         contentAlignment = Alignment.Center
@@ -51,7 +51,7 @@ fun BottomNav(
                     androidx.compose.ui.graphics.Brush.horizontalGradient(
                         listOf(
                             Color.Transparent,
-                            Color.White.copy(alpha = 0.20f),
+                            Color.White.copy(alpha = 0.30f),
                             Color.Transparent
                         )
                     )
@@ -109,7 +109,7 @@ private fun NavItem(
             .scale(scale)
             .clip(RoundedCornerShape(20.dp))
             .background(
-                if (isActive) accent.copy(alpha = 0.35f) else Color.Transparent
+                if (isActive) accent.copy(alpha = 0.25f) else Color.Transparent
             )
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },

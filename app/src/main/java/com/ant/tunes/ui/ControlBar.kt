@@ -2,15 +2,18 @@ package com.ant.tunes.ui
 
 import android.content.Context
 import android.media.AudioManager
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -49,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextAlign
@@ -86,6 +90,19 @@ fun ControlBar(
     var isDownloading by remember { mutableStateOf(false) }
 
     var isShuffle by remember { mutableStateOf(false) }
+    // 🟢 ADDED: Buffering State & Shimmer Animation
+    val isBuffering by PlayerManager.isBuffering.collectAsState()
+
+    val shimmerX by androidx.compose.animation.core.rememberInfiniteTransition(label = "seek_shimmer")
+        .animateFloat(
+            initialValue = -1f,
+            targetValue = 2f,
+            animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                animation = androidx.compose.animation.core.tween(1200, easing = androidx.compose.animation.core.LinearEasing),
+                repeatMode = androidx.compose.animation.core.RepeatMode.Restart
+            ),
+            label = "sx"
+        )
 
     // PATCH 2 — removed local isLiked state, now driven by param
     val safePosition = position.coerceAtLeast(0L)
@@ -197,41 +214,72 @@ fun ControlBar(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // ── 3. SEEK BAR ──
-        Column(
+        // 🟢 ADDED: Dynamic Buffering / Slider Box
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
+                .height(30.dp)
         ) {
-            Slider(
-                value = sliderPosition,
-                onValueChange = {
-                    isDragging = true
-                    sliderPosition = it
-                },
-                onValueChangeFinished = {
-                    isDragging = false
-                    PlayerManager.seekTo((sliderPosition * safeDuration).toLong())
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(30.dp),
-                colors = SliderDefaults.colors(
-                    thumbColor = Color.Transparent,
-                    activeTrackColor = accent,
-                    inactiveTrackColor = Color.White.copy(alpha = 0.3f)
-                ),
-                thumb = {
+            if (isBuffering) {
+                // ── SPOTIFY-STYLE LOADING SHIMMER ──
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .align(Alignment.Center)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color.White.copy(alpha = 0.15f))
+                ) {
                     Box(
                         modifier = Modifier
-                            .size(15.dp)
-                            .graphicsLayer { rotationZ = thumbRotation }
-                            .background(accent, RoundedCornerShape(3.dp))
+                            .fillMaxHeight()
+                            .fillMaxWidth(0.3f)
+                            .offset(x = (shimmerX * androidx.compose.ui.platform.LocalDensity.current.run {
+                                300.dp.toPx()
+                            } / androidx.compose.ui.platform.LocalDensity.current.density).dp)
+                            .background(
+                                androidx.compose.ui.graphics.Brush.horizontalGradient(
+                                    listOf(
+                                        Color.Transparent,
+                                        accent.copy(alpha = 0.8f),
+                                        Color.Transparent
+                                    )
+                                ),
+                                RoundedCornerShape(2.dp)
+                            )
                     )
                 }
-            )
+            } else {
+                Slider(
+                    value = sliderPosition,
+                    onValueChange = {
+                        isDragging = true
+                        sliderPosition = it
+                    },
+                    onValueChangeFinished = {
+                        isDragging = false
+                        PlayerManager.seekTo((sliderPosition * safeDuration).toLong())
+                    },
+                    modifier = Modifier.fillMaxWidth().height(30.dp),
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color.Transparent,
+                        activeTrackColor = accent,
+                        inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                    ),
+                    thumb = {
+                        Box(
+                            modifier = Modifier
+                                .size(15.dp)
+                                .graphicsLayer { rotationZ = thumbRotation }
+                                .background(accent, RoundedCornerShape(3.dp))
+                        )
+                    }
+                )
+            }
+        }
 
-            Row(
+
+        Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 6.dp),
@@ -389,7 +437,7 @@ fun ControlBar(
             }
         }
     }
-}
+
 
 fun formatTime(ms: Long): String {
     val totalSeconds = ms / 1000

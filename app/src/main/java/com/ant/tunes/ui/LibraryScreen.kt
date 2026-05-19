@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
@@ -84,6 +85,11 @@ fun LibraryScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel) {
     // 🟢 Update the global state so MainActivity knows to hide the Bottom Nav
     IsLibrarySubScreenActive = activeRoute != "Main"
 
+    // 🟢 ADDED: Intercept Android hardware back button
+    androidx.activity.compose.BackHandler(enabled = activeRoute != "Main") {
+        activeRoute = "Main"
+    }
+
     when (activeRoute) {
         "Main" -> LibraryMain(
             onNavigate = { route, id ->
@@ -96,6 +102,7 @@ fun LibraryScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel) {
         "PlaylistDetail" -> PlaylistDetailScreen(playlistId = selectedPlaylistId, onBack = { activeRoute = "Main" })
     }
 }
+
 
 // ═══════════════════════════════════════
 // 📚 LIBRARY MAIN UI
@@ -328,135 +335,406 @@ fun ImportPlaylistSheet(
 ) {
     val accent = LocalAccentColor.current
     val coroutineScope = rememberCoroutineScope()
-    var isLoading by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf("") }
+
+    var isLoadingPlaylists by remember { mutableStateOf(false) }
+    var playlists by remember {
+        mutableStateOf<List<com.ant.tunes.lastfm.LastFmPlaylistItem>>(emptyList())
+    }
+    var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var importingIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var doneIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var errorMessage by remember { mutableStateOf("") }
+    var isImportingAll by remember { mutableStateOf(false) }
+
+    val isLoggedIn = com.ant.tunes.lastfm.LastFmRepository.isLoggedIn(context)
+    val username = com.ant.tunes.lastfm.LastFmRepository.getUsername(context) ?: ""
+
+    LaunchedEffect(Unit) {
+        if (!isLoggedIn) return@LaunchedEffect
+        isLoadingPlaylists = true
+        errorMessage = ""
+        playlists = com.ant.tunes.lastfm.LastFmRepository
+            .getUserPlaylistsDirect(context)
+        isLoadingPlaylists = false
+        if (playlists.isEmpty()) {
+            errorMessage = "No playlists found on Last.fm for @$username"
+        }
+    }
+
+    suspend fun importSingle(p: com.ant.tunes.lastfm.LastFmPlaylistItem) {
+        val pid = p.id ?: return
+        if (doneIds.contains(pid)) return
+        importingIds = importingIds + pid
+        try {
+            val tracks = com.ant.tunes.lastfm.LastFmRepository
+                .getPlaylistTracksDirect(pid)
+            val playlist = com.ant.tunes.ui.PlaylistData(
+                java.util.UUID.randomUUID().toString(),
+                androidx.compose.runtime.mutableStateOf(p.title ?: "Imported")
+            )
+            tracks.forEach { track ->
+                playlist.tracks.add(
+                    com.ant.tunes.data.Song(
+                        id          = "${track.name}_${track.creator}",
+                        title       = track.name ?: "",
+                        artist      = track.creator ?: "",
+                        albumArt    = "",
+                        sourceType  = com.ant.tunes.data.SourceType.LASTFM_IMPORT,
+                        source      = "lastfm_import"
+                    )
+                )
+            }
+            if (!globalPlaylists.any { it.name.value == playlist.name.value }) {
+                globalPlaylists.add(playlist)
+                com.ant.tunes.player.AppDataManager.savePlaylists(
+                    context, globalPlaylists
+                )
+            }
+            doneIds = doneIds + pid
+        } catch (e: Exception) {
+            errorMessage = "Failed: ${p.title}: ${e.message}"
+        } finally {
+            importingIds = importingIds - pid
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF121212)
+        containerColor = Color(0xFF0E0E0E),
+        dragHandle = {
+            BottomSheetDefaults.DragHandle(color = AntText3)
+        }
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(24.dp)
-                .padding(bottom = 40.dp)
+                .navigationBarsPadding()
         ) {
-            Text("IMPORT PLAYLIST",
-                style = MaterialTheme.typography.labelLarge,
-                color = accent)
-            Spacer(Modifier.height(20.dp))
-
-            // Last.fm import
-            Box(
+            // ── HEADER ──
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(AntSurface1)
-                    .border(1.dp, AntGlassBorder, RoundedCornerShape(16.dp))
-                    .clickable {
-                        if (!com.ant.tunes.lastfm.LastFmRepository.isLoggedIn(context)) {
-                            message = "Connect Last.fm first in Profile"
-                            return@clickable
-                        }
-                        coroutineScope.launch {
-                            isLoading = true
-                            try {
-                                // Last.fm loved tracks → import as playlist
-                                val username = com.ant.tunes.lastfm.LastFmRepository
-                                    .getUsername(context) ?: return@launch
-                                val url = "https://ws.audioscrobbler.com/2.0/?method=user.getLovedTracks&user=${username}&api_key=e2427f83cfff636cb919ccdc4db1b4c1&format=json&limit=50"
-                                val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-                                if (conn.responseCode == 200) {
-                                    val resp = conn.inputStream.bufferedReader().readText()
-                                    val json = org.json.JSONObject(resp)
-                                    val tracks = json.getJSONObject("lovedtracks")
-                                        .getJSONArray("track")
-
-                                    val playlist = com.ant.tunes.ui.PlaylistData(
-                                        java.util.UUID.randomUUID().toString(),
-                                        androidx.compose.runtime.mutableStateOf("Last.fm Loved Songs")
-                                    )
-
-                                    for (i in 0 until minOf(tracks.length(), 50)) {
-                                        val t = tracks.getJSONObject(i)
-                                        val name = t.getString("name")
-                                        val artist = t.getJSONObject("artist").getString("name")
-                                        val imgUrl = t.getJSONArray("image")
-                                            .let { arr ->
-                                                arr.getJSONObject(arr.length() - 1)
-                                                    .optString("#text", "")
-                                            }
-                                        // create song with metadata (streamUrl resolved on play)
-                                        playlist.tracks.add(
-                                            com.ant.tunes.data.Song(
-                                                id = "${name}_${artist}",
-                                                title = name,
-                                                artist = artist,
-                                                albumArt = imgUrl,
-                                                streamUrl = "",
-                                                source = "lastfm_import"
-                                            )
-                                        )
-                                    }
-
-                                    if (!globalPlaylists.any { it.name.value == playlist.name.value }) {
-                                        globalPlaylists.add(playlist)
-                                        com.ant.tunes.player.AppDataManager
-                                            .savePlaylists(context, globalPlaylists)
-                                        message = "✅ Imported ${playlist.tracks.size} loved tracks!"
-                                    } else {
-                                        message = "Playlist already imported"
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                message = "Import failed: ${e.message}"
-                            } finally {
-                                isLoading = false
-                            }
-                        }
-                    }
-                    .padding(16.dp)
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFFD51007)),
-                        contentAlignment = Alignment.Center
+                Column {
+                    Text("IMPORT FROM LAST.FM",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = accent)
+                    if (username.isNotBlank()) {
+                        Text("@$username",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = AntText3)
+                    }
+                }
+                if (selectedIds.isNotEmpty()) {
+                    Button(
+                        onClick = {
+                            coroutineScope.launch {
+                                isImportingAll = true
+                                selectedIds.forEach { id ->
+                                    playlists.find { it.id == id }
+                                        ?.let { importSingle(it) }
+                                }
+                                isImportingAll = false
+                                selectedIds = emptySet()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = accent
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(
+                            horizontal = 16.dp, vertical = 8.dp
+                        )
                     ) {
-                        Text("lfm", style = MaterialTheme.typography.labelLarge,
-                            color = Color.White)
-                    }
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("Last.fm Loved Songs",
-                            style = MaterialTheme.typography.titleSmall, color = AntText)
-                        Text("Import your loved tracks",
-                            style = MaterialTheme.typography.labelSmall, color = AntText2)
-                    }
-                    if (isLoading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            color = accent, strokeWidth = 2.dp
+                        if (isImportingAll) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text(
+                            "IMPORT ${selectedIds.size}",
+                            style = MaterialTheme.typography.labelLarge
                         )
                     }
                 }
             }
 
-            if (message.isNotEmpty()) {
-                Spacer(Modifier.height(12.dp))
-                Text(message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (message.startsWith("✅")) accent else Color(0xFFFF6B6B))
+            HorizontalDivider(color = AntGlassBorder, thickness = 0.5.dp)
+
+            // ── CONTENT ──
+            when {
+                !isLoggedIn -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(40.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "Connect Last.fm in Profile → Integrations",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = AntText3,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
+
+                isLoadingPlaylists -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(200.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            CircularProgressIndicator(
+                                color = accent, strokeWidth = 2.dp
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Text("Loading playlists...",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = AntText3)
+                        }
+                    }
+                }
+
+                playlists.isEmpty() -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(40.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            errorMessage.ifEmpty { "No playlists found" },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = AntText3,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
+
+                else -> {
+                    // Select all row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                selectedIds = if (selectedIds.size == playlists.size) {
+                                    emptySet()
+                                } else {
+                                    playlists.mapNotNull { it.id }.toSet()
+                                }
+                            }
+                            .padding(horizontal = 20.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = selectedIds.size == playlists.size,
+                            onCheckedChange = {
+                                selectedIds = if (it) {
+                                    playlists.mapNotNull { p -> p.id }.toSet()
+                                } else emptySet()
+                            },
+                            colors = CheckboxDefaults.colors(
+                                checkedColor = accent,
+                                uncheckedColor = AntText3
+                            )
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text("Select All",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = AntText2)
+                        Spacer(Modifier.weight(1f))
+                        Text("${playlists.size} PLAYLISTS",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = AntText3)
+                    }
+
+                    HorizontalDivider(
+                        color = AntGlassBorder, thickness = 0.5.dp,
+                        modifier = Modifier.padding(horizontal = 20.dp)
+                    )
+
+                    // ── PLAYLIST LIST ──
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 450.dp),
+                        contentPadding = PaddingValues(
+                            horizontal = 20.dp,
+                            vertical = 12.dp
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(
+                            items = playlists,
+                            key = { it.id ?: it.title ?: "" }
+                        ) { p ->
+                            val pid = p.id ?: return@items
+                            val isSelected = selectedIds.contains(pid)
+                            val isImporting = importingIds.contains(pid)
+                            val isDone = doneIds.contains(pid)
+                            val alreadyExists = globalPlaylists.any {
+                                it.name.value == p.title
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .animateItem()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(
+                                        when {
+                                            isDone -> accent.copy(alpha = 0.08f)
+                                            isSelected -> AntSurface2
+                                            else -> AntSurface1
+                                        }
+                                    )
+                                    .border(
+                                        1.dp,
+                                        when {
+                                            isDone -> accent.copy(alpha = 0.3f)
+                                            isSelected -> accent.copy(alpha = 0.2f)
+                                            else -> AntGlassBorder
+                                        },
+                                        RoundedCornerShape(14.dp)
+                                    )
+                                    .clickable(enabled = !isDone && !alreadyExists) {
+                                        selectedIds = if (isSelected) {
+                                            selectedIds - pid
+                                        } else {
+                                            selectedIds + pid
+                                        }
+                                    }
+                                    .padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Checkbox
+                                if (!isDone && !alreadyExists) {
+                                    Checkbox(
+                                        checked = isSelected,
+                                        onCheckedChange = {
+                                            selectedIds = if (it) {
+                                                selectedIds + pid
+                                            } else selectedIds - pid
+                                        },
+                                        colors = CheckboxDefaults.colors(
+                                            checkedColor = accent,
+                                            uncheckedColor = AntText3
+                                        ),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                }
+
+                                // Icon
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(
+                                            Brush.linearGradient(
+                                                listOf(
+                                                    Color(0xFFD51007),
+                                                    Color(0xFF8B0000)
+                                                )
+                                            )
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("lfm",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color.White)
+                                }
+
+                                Spacer(Modifier.width(12.dp))
+
+                                // Info
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        p.title ?: "Playlist",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = when {
+                                            isDone || alreadyExists -> AntText2
+                                            else -> AntText
+                                        },
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        when {
+                                            alreadyExists -> "Already imported"
+                                            isDone -> "Imported ✓"
+                                            else -> "${p.size ?: "?"} tracks"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = when {
+                                            isDone -> accent
+                                            alreadyExists -> AntText3
+                                            else -> AntText3
+                                        }
+                                    )
+                                }
+
+                                // Action
+                                when {
+                                    isImporting -> CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        color = accent,
+                                        strokeWidth = 2.dp
+                                    )
+                                    isDone -> Icon(
+                                        Icons.Default.Check, null,
+                                        tint = accent,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    alreadyExists -> Icon(
+                                        Icons.Default.Check, null,
+                                        tint = AntText3,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    else -> TextButton(
+                                        onClick = {
+                                            coroutineScope.launch {
+                                                importSingle(p)
+                                            }
+                                        },
+                                        contentPadding = PaddingValues(
+                                            horizontal = 12.dp, vertical = 4.dp
+                                        )
+                                    ) {
+                                        Text("IMPORT",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = accent)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (errorMessage.isNotBlank()) {
+                        Text(
+                            errorMessage,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFFFF6B6B),
+                            modifier = Modifier.padding(
+                                horizontal = 20.dp, vertical = 8.dp
+                            )
+                        )
+                    }
+                }
             }
 
-            Spacer(Modifier.height(16.dp))
-            Text(
-                "YouTube Music & Spotify direct import requires Premium APIs.\nExport your Spotify/YouTube playlist to Last.fm first, then import here.",
-                style = MaterialTheme.typography.labelSmall,
-                color = AntText3
-            )
+            Spacer(Modifier.height(8.dp))
         }
     }
 }

@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.automirrored.filled.ArrowBack // 🟢 Using the AutoMirrored version to prevent deprecation warnings
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -36,10 +37,13 @@ fun CacheScreen(onBack: () -> Unit) {
     // 🟢 FIXED: Pulling the REAL history directly from the PlayerManager brain
     val recentSongs by PlayerManager.recentlyPlayed.collectAsState()
 
-    // 🟢 Filtering the real list to see what's actually living on the disk
-    val cachedSongs = recentSongs.filter { s ->
-        CacheManager.isCached(context, s.streamUrl)
+    // 🟢 UPDATED: Make this a mutable state list so the UI updates on delete
+    var cachedSongs by remember(recentSongs) {
+        mutableStateOf(recentSongs.filter { s ->
+            CacheManager.isCached(context, s.streamUrl)
+        })
     }
+
 
     Column(modifier = Modifier.fillMaxSize().background(AntBlack).statusBarsPadding()) {
         // ── HEADER ──
@@ -81,10 +85,14 @@ fun CacheScreen(onBack: () -> Unit) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { PlayerManager.play(context, cachedSongs, index) }
+                            .clickable {
+                                PlayerManager.play(context, cachedSongs, index)
+                                com.ant.tunes.ui.RequestFullScreenPlayer = true // 🟢 ADDED
+                            }
                             .padding(horizontal = 16.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+
                         Image(
                             painter = rememberAsyncImagePainter(song.albumArt),
                             contentDescription = null,
@@ -92,25 +100,50 @@ fun CacheScreen(onBack: () -> Unit) {
                         )
                         Spacer(modifier = Modifier.width(14.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(song.title, style = MaterialTheme.typography.titleSmall, color = AntText, maxLines = 1)
-                            Text(song.artist, style = MaterialTheme.typography.bodySmall, color = AntText2, maxLines = 1)
+                            Text(
+                                song.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = AntText,
+                                maxLines = 1
+                            )
+                            Text(
+                                song.artist,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = AntText2,
+                                maxLines = 1
+                            )
+                            // 🟢 ADDED: Show actual file size
+                            Text(
+                                com.ant.tunes.player.CacheManager.formatSize(
+                                    com.ant.tunes.player.CacheManager.getCachedSongSize(
+                                        context,
+                                        song.streamUrl
+                                    )
+                                ),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = AntText3
+                            )
                         }
 
-                        Box(
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .background(accent.copy(alpha = 0.1f))
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        // 🟢 REPLACED BADGE WITH DELETE BUTTON
+                        IconButton(
+                            onClick = {
+                                com.ant.tunes.player.CacheManager.deleteCachedSong(
+                                    context,
+                                    song.streamUrl
+                                )
+                                // Instantly remove from UI
+                                cachedSongs = cachedSongs.filter { it.id != song.id }
+                            },
+                            modifier = Modifier.size(36.dp)
                         ) {
-                            Text("OFFLINE", style = MaterialTheme.typography.labelSmall, color = accent)
+                            Icon(
+                                Icons.Default.Delete, null,
+                                tint = accent.copy(alpha = 0.7f),
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
                     }
-
-                    HorizontalDivider(
-                        color = AntGlassBorder,
-                        thickness = 0.5.dp,
-                        modifier = Modifier.padding(horizontal = 16.dp)
-                    )
                 }
             }
         }

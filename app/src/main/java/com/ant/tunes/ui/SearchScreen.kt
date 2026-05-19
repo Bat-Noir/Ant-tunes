@@ -38,6 +38,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
@@ -50,10 +51,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -105,10 +109,14 @@ var IsSearchUIActive by mutableStateOf(false)
 @Composable
 fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
     val results = vm.combinedResults
-    // 🟢 BUG FIX: Bind trending to the real top tracks from PlayerManager so it always shows
-    val trendingSongs by PlayerManager.topTracks.collectAsState()
+
+    // 🟢 UPDATED: Use public charts if local history is empty
+    val localTop by PlayerManager.topTracks.collectAsState()
+    val publicCharts by vm.publicCharts.collectAsState()
+    val trendingSongs = localTop.ifEmpty { publicCharts }
 
     val isLoading by vm.loading
+
     val listState = rememberLazyListState()
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -404,29 +412,18 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
 
                     LazyColumn(state = listState, contentPadding = PaddingValues(bottom = 160.dp)) {
                         itemsIndexed(items = filteredResults, key = { index, song -> "${song.source}_${song.id}_$index" }) { _, song ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth().clickable(indication = LocalIndication.current, interactionSource = remember { MutableInteractionSource() }) {
+                            // 🟢 REPLACED WITH SWIPEABLE ROW
+                            SwipeableSongRow(
+                                song = song,
+                                context = context,
+                                accent = accent,
+                                onSongClick = {
                                     PlayerManager.play(context, filteredResults, filteredResults.indexOf(song))
                                     saveSearch(query)
                                     focusManager.clearFocus()
                                     RequestFullScreenPlayer = true
-                                }.padding(vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Image(painter = rememberAsyncImagePainter(song.albumArt), contentDescription = null, modifier = Modifier.size(50.dp).clip(RoundedCornerShape(12.dp)))
-                                Spacer(modifier = Modifier.width(14.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(song.title, style = MaterialTheme.typography.titleSmall, color = AntText, maxLines = 1)
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(song.artist, style = MaterialTheme.typography.bodySmall, color = AntText2, maxLines = 1, modifier = Modifier.weight(1f, fill = false))
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Box(modifier = Modifier.background(color = when (song.source) { "gaana" -> Color(0xFFFF6B35) "youtube" -> Color(0xFFFF0000) else -> Color(0xFF1DB954) }, shape = RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                                            Text(song.source.uppercase(), style = MaterialTheme.typography.labelSmall, color = Color.White)
-                                        }
-                                    }
-                                }
-                                IconButton(onClick = {
+                                },
+                                onAddToPlaylist = {
                                     if (TargetPlaylistId != null) {
                                         val p = globalPlaylists.find { it.id == TargetPlaylistId }
                                         if (p != null) {
@@ -440,10 +437,9 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
                                     } else {
                                         songToAddToPlaylist = song
                                     }
-                                }) {
-                                    Icon(Icons.Default.Add, "Add to Playlist", tint = accent)
                                 }
-                            }
+                            )
+
                             HorizontalDivider(color = AntGlassBorder, thickness = 0.5.dp)
                         }
 
@@ -463,6 +459,120 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
 }
 
 // Kept untouched just in case it's used elsewhere (though hidden from UI now)
+
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SwipeableSongRow(
+    song: Song,
+    context: android.content.Context,
+    accent: Color,
+    onSongClick: () -> Unit,
+    onAddToPlaylist: () -> Unit
+) {
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            when (value) {
+                // ✅ Swipe RIGHT → Like
+                SwipeToDismissBoxValue.StartToEnd -> {
+                    if (!globalLikedSongs.any { it.id == song.id }) {
+                        globalLikedSongs.add(song)
+                        com.ant.tunes.player.AppDataManager.saveLikedSongs(context, globalLikedSongs)
+                    }
+                    android.widget.Toast.makeText(
+                        context, "❤️ Added to Liked Songs",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                    false // don't dismiss — just trigger the action
+                }
+                // ✅ Swipe LEFT → Play Next (Insert into Queue)
+                SwipeToDismissBoxValue.EndToStart -> {
+                    PlayerManager.insertNext(song, context) // 🟢 CHANGED HERE
+                    android.widget.Toast.makeText(
+                        context, "➕ Added to play next",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                    false
+                }
+                else -> false
+            }
+        }
+    )
+
+    SwipeToDismissBox(
+        state = dismissState,
+        backgroundContent = {
+            val direction = dismissState.dismissDirection
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+                horizontalArrangement = when (direction) {
+                    SwipeToDismissBoxValue.StartToEnd -> Arrangement.Start
+                    else -> Arrangement.End
+                },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                when (direction) {
+                    SwipeToDismissBoxValue.StartToEnd -> {
+                        // Like indicator
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFEC4899).copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Favorite, null, tint = Color(0xFFEC4899), modifier = Modifier.size(22.dp))
+                        }
+                    }
+                    SwipeToDismissBoxValue.EndToStart -> {
+                        // Queue indicator
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(accent.copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.QueueMusic, null, tint = accent, modifier = Modifier.size(22.dp))
+                        }
+                    }
+                    else -> {}
+                }
+            }
+        }
+    ) {
+        // 🟢 THE EXISTING SONG ROW DESIGN
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(AntBlack) // ✅ MUST have a solid background so the swipe colors hide behind it
+                .clickable(indication = androidx.compose.foundation.LocalIndication.current, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) {
+                    onSongClick()
+                }.padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            coil.compose.AsyncImage(model = song.albumArt, contentDescription = null, modifier = Modifier.size(50.dp).clip(RoundedCornerShape(12.dp)))
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(song.title, style = MaterialTheme.typography.titleSmall, color = AntText, maxLines = 1)
+                Spacer(modifier = Modifier.height(2.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(song.artist, style = MaterialTheme.typography.bodySmall, color = AntText2, maxLines = 1, modifier = Modifier.weight(1f, fill = false))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(modifier = Modifier.background(color = when (song.source) { "gaana" -> Color(0xFFFF6B35) "youtube" -> Color(0xFFFF0000) else -> Color(0xFF1DB954) }, shape = RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                        Text(song.source.uppercase(), style = MaterialTheme.typography.labelSmall, color = Color.White)
+                    }
+                }
+            }
+            IconButton(onClick = onAddToPlaylist) {
+                Icon(Icons.Default.Add, "Add to Playlist", tint = accent)
+            }
+        }
+    }
+}
+
 @Composable
 fun AlbumDetailView(
     album: BrowseCard,

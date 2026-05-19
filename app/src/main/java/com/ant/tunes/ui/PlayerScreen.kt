@@ -3,6 +3,7 @@ package com.ant.tunes.ui
 import androidx.annotation.OptIn
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
@@ -33,7 +34,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.ant.tunes.lastfm.LastFmAuthManager
 
-
+var IsHomeSubScreenActive by mutableStateOf(false)
 @Composable
 fun PlayerScreen(onOpenProfile: () -> Unit = {}) {
     val context = LocalContext.current
@@ -97,17 +98,6 @@ fun PlayerScreen(onOpenProfile: () -> Unit = {}) {
             }
         }
 
-        if (expandAnim < 1f) {
-            MiniPlayerBar(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .padding(bottom = 15.dp, start = 16.dp, end = 16.dp)
-                    .alpha(1f - expandAnim),
-                onClick = { expanded = true },
-                isPlaying = isPlaying
-            )
-        }
 
         // 🟢 WRAP IN A DIALOG TO COVER THE BOTTOM NAV
         if (showCache) {
@@ -138,6 +128,7 @@ fun HomeContent(
     showCache: Boolean,
     onShowCacheChange: (Boolean) -> Unit
 ) {
+
     val context = LocalContext.current
 
     // 🟢 ADDED: Modern Network Connectivity Checker
@@ -160,6 +151,15 @@ fun HomeContent(
 
     val downloadedSongs by PlayerManager.downloadedSongs.collectAsState()
     var showOffline by remember { mutableStateOf(false) }
+    // 🟢 Tells MainActivity to hide the nav bars when these screens are open
+    LaunchedEffect(showCache, showOffline) {
+        com.ant.tunes.ui.IsHomeSubScreenActive = showCache || showOffline
+    }
+
+    // 🟢 Intercepts Android Hardware Back Button to close the Offline screen cleanly
+    androidx.activity.compose.BackHandler(enabled = showOffline) {
+        showOffline = false
+    }
 
     // 🟢 Read Username from SharedPreferences
     val prefs = context.getSharedPreferences("ant_prefs", android.content.Context.MODE_PRIVATE)
@@ -253,12 +253,17 @@ fun HomeContent(
                     onClick = { onOpenProfile() },
                     modifier = Modifier
                         .size(36.dp)
-                        .background(AntSurface1, CircleShape)
-                        .border(1.dp, AntGlassBorder, CircleShape)
+                        .clip(CircleShape)
+                        .border(1.dp, accent.copy(alpha = 0.4f), CircleShape)
                 ) {
-                    Icon(Icons.Default.Person, null,
-                        tint = AntText2, modifier = Modifier.size(18.dp))
+                    // 🟢 FIXED: Calls your actual custom avatar instead of just the letter!
+                    com.ant.tunes.ui.AvatarDisplay(
+                        userName = userName,
+                        size = 36.dp, // Shrinks it perfectly for the top bar
+                        accent = accent
+                    )
                 }
+
             }
             Spacer(Modifier.height(6.dp))
             Text("Welcome back,\n$userName",
@@ -474,9 +479,11 @@ fun HomeContent(
                             modifier = Modifier
                                 .width(140.dp)
                                 .clickable {
-                                    PlayerManager.playStream(context, song)
+                                    // 🟢 FIXED: Loads the entire "Made For You" list as a queue!
+                                    PlayerManager.play(context, recommendedSongs, recommendedSongs.indexOf(song))
                                     RequestFullScreenPlayer = true
                                 }
+
                         ) {
                             Box(
                                 modifier = Modifier
@@ -599,9 +606,10 @@ fun HomeContent(
                             modifier = Modifier
                                 .width(120.dp)
                                 .clickable {
-                                    PlayerManager.playStream(context, song)
+                                    PlayerManager.play(context, recentSongs, recentSongs.indexOf(song))
                                     RequestFullScreenPlayer = true
                                 }
+
                         ) {
                             Box(
                                 modifier = Modifier
@@ -662,7 +670,8 @@ fun HomeContent(
                             modifier = Modifier
                                 .width(120.dp)
                                 .clickable {
-                                    PlayerManager.playStream(context, song)
+                                    val top10List = topTracks.take(10)
+                                    PlayerManager.play(context, top10List, top10List.indexOf(song))
                                     RequestFullScreenPlayer = true
                                 }
                         ) {
@@ -973,39 +982,24 @@ fun MiniPlayerBar(
     val progress = if (duration > 0) position.toFloat() / duration else 0f
 
     val accent = LocalAccentColor.current
-    val accentHot = accent.copy(alpha = 0.3f)
 
     if (currentSong == null) return
 
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
-            .background(Color(0xE6080808))
-            .border(1.dp, accentHot, RoundedCornerShape(24.dp))
+            .height(67.dp)
+            .clip(RoundedCornerShape(32.dp))
+            .background(AntBlack.copy(alpha = 0.80f)) // 🟢 Deep black tint to block the background
+            .border(1.dp, accent.copy(alpha = 0.4f), RoundedCornerShape(36.dp)) // 🟢 Thin accent border
             .clickable { onClick() }
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(0.7f)
-                .height(1.dp)
-                .align(Alignment.TopCenter)
-                .background(
-                    Brush.horizontalGradient(
-                        listOf(
-                            Color.Transparent,
-                            accent.copy(alpha = 0.4f),
-                            Color.Transparent
-                        )
-                    )
-                )
-        )
 
-        Row(
+    Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .fillMaxSize()
+                .padding(horizontal = 16.dp)
         ) {
             AsyncImage(
                 model = currentSong?.albumArt,
@@ -1057,7 +1051,7 @@ fun MiniPlayerBar(
                 .fillMaxWidth()
                 .height(2.dp)
                 .align(Alignment.BottomCenter)
-                .clip(RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp))
+                .clip(RoundedCornerShape(bottomStart = 32.dp, bottomEnd = 32.dp))
                 .background(AntGlassBorder)
         ) {
             Box(
@@ -1069,3 +1063,4 @@ fun MiniPlayerBar(
         }
     }
 }
+

@@ -4,25 +4,71 @@ import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.*
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.*
-import androidx.compose.ui.draw.*
-import androidx.compose.ui.graphics.*
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.*
-import coil.compose.AsyncImage
-import com.ant.tunes.player.PlayerManager
-import com.ant.tunes.ui.theme.*
-import com.ant.tunes.lastfm.LastFmAuthManager
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.ant.tunes.lastfm.LastFmAuthManager
+import com.ant.tunes.player.PlayerManager
+import com.ant.tunes.ui.theme.AntBlack
+import com.ant.tunes.ui.theme.AntBlue
+import com.ant.tunes.ui.theme.AntGlassBorder
+import com.ant.tunes.ui.theme.AntGlassBorderHot
+import com.ant.tunes.ui.theme.AntSurface1
+import com.ant.tunes.ui.theme.AntSurface2
+import com.ant.tunes.ui.theme.AntText
+import com.ant.tunes.ui.theme.AntText2
+import com.ant.tunes.ui.theme.AntText3
+import com.ant.tunes.ui.theme.LocalAccentColor
 import com.ant.tunes.viewmodel.PlayerViewModel
 import kotlinx.coroutines.launch
 
@@ -52,6 +98,8 @@ fun ProfileScreen(
     val accent = LocalAccentColor.current
     val accentDim = accent.copy(alpha = 0.15f)
     val accentHot = accent.copy(alpha = 0.3f)
+    var showAvatarPicker by remember { mutableStateOf(false) }
+    var avatarRefreshKey by remember { mutableStateOf(0) }
 
     // 🟢 Profile Details from SharedPreferences
     var currentName by remember { mutableStateOf(prefs.getString("user_name", userName)?.ifEmpty { "Listener" } ?: "Listener") }
@@ -159,44 +207,38 @@ fun ProfileScreen(
             Spacer(Modifier.height(32.dp))
 
             // ── CUSTOM AVATAR ──
-            Box(modifier = Modifier.align(Alignment.CenterHorizontally).size(100.dp)) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clip(CircleShape)
-                        .background(Brush.radialGradient(listOf(accentDim, AntBlack)))
-                        .border(2.dp, accentHot, CircleShape)
-                        .clickable { launcher.launch("image/*") }, // Triggers photo picker
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (profileImageUri != null) {
-                        AsyncImage(
-                            model = profileImageUri,
-                            contentDescription = "Profile Photo",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        Text(initials, style = MaterialTheme.typography.displayMedium, color = accent)
-                    }
+            Box(
+                modifier = Modifier
+                    .size(100.dp)
+                    .align(Alignment.CenterHorizontally)
+            ) {
+                key(avatarRefreshKey) {
+                    AvatarDisplay(
+                        userName = currentName,
+                        size = 100.dp,
+                        accent = accent
+                    )
                 }
-
-                // Edit Pencil overlay
+                // Edit button (Ghost border removed!)
                 Box(
                     modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .offset(x = (-4).dp, y = (-4).dp)
                         .size(28.dp)
-                        .background(accent, CircleShape)
-                        .border(2.5.dp, AntBlack, CircleShape)
-                        .clickable { launcher.launch("image/*") },
+                        .clip(CircleShape)
+                        .background(accent)
+                        .align(Alignment.BottomEnd)
+                        .clickable { showAvatarPicker = true },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.Edit, "Change Photo", tint = AntBlack, modifier = Modifier.size(14.dp))
+                    Icon(
+                        Icons.Default.Edit, null,
+                        tint = AntBlack,
+                        modifier = Modifier.size(14.dp)
+                    )
                 }
             }
 
             Spacer(Modifier.height(20.dp))
+
 
             // ── EDITABLE NAME ──
             Row(
@@ -341,6 +383,13 @@ fun ProfileScreen(
                 }
             }
         }
+    }
+    // ── AVATAR PICKER SHEET ──
+    if (showAvatarPicker) {
+        AvatarPickerSheet(
+            onDismiss = { showAvatarPicker = false },
+            onAvatarChanged = { avatarRefreshKey++ }
+        )
     }
 }
 
