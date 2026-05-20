@@ -83,7 +83,8 @@ fun ProfileScreen(
     val prefs = context.getSharedPreferences("ant_prefs", Context.MODE_PRIVATE)
 
     // ── DYNAMIC STATES ──
-    val playlist by PlayerManager.playlistFlow.collectAsState()
+    val recentSongs by PlayerManager.recentlyPlayed.collectAsState()
+    val topTracks by PlayerManager.topTracks.collectAsState() // 🟢 Pulling the Top Stats
     val downloadedSongs by PlayerManager.downloadedSongs.collectAsState()
     val currentSong by PlayerManager.currentSong.collectAsState()
 
@@ -118,10 +119,10 @@ fun ProfileScreen(
         }
     }
 
-    // Dynamic Stats
-    val totalPlays = playlist.size
+    // Dynamic Stats: Now accurate to history, not queue
+    val totalPlays = recentSongs.size
     val offline = downloadedSongs.size
-    val likedSongsCount = globalLikedSongs.size // Pulling from global states wired in LibraryScreen
+    val likedSongsCount = globalLikedSongs.size
     val initials = currentName.take(2).uppercase()
 
     // ── EDIT NAME DIALOG ──

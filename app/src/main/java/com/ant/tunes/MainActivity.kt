@@ -34,6 +34,8 @@ class MainActivity : ComponentActivity() {
         if (com.ant.tunes.player.PlayerManager.currentSong.value == null) {
             com.ant.tunes.player.PlayerManager.init(this)
             com.ant.tunes.player.PlayerManager.restorePlayback(this)
+            // Add this inside onCreate() in MainActivity.kt
+            com.ant.tunes.player.LocalHistoryManager.loadHistory(this)
         }
 
         // ✅ restore liked songs + playlists from disk

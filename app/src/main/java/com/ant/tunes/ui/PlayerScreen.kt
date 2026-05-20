@@ -1,40 +1,76 @@
 package com.ant.tunes.ui
 
-import androidx.annotation.OptIn
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.*
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.*
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.*
-import androidx.compose.ui.draw.*
-import androidx.compose.ui.graphics.*
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.*
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.ant.tunes.player.PlayerManager
-import com.ant.tunes.ui.theme.*
+import com.ant.tunes.ui.theme.AntBlack
+import com.ant.tunes.ui.theme.AntGlassBorder
+import com.ant.tunes.ui.theme.AntGlassBorderHot
+import com.ant.tunes.ui.theme.AntSurface1
+import com.ant.tunes.ui.theme.AntSurface2
+import com.ant.tunes.ui.theme.AntText
+import com.ant.tunes.ui.theme.AntText2
+import com.ant.tunes.ui.theme.LocalAccentColor
 import com.ant.tunes.viewmodel.PlayerViewModel
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.media3.common.util.UnstableApi
-import com.ant.tunes.player.CacheManager
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import com.ant.tunes.lastfm.LastFmAuthManager
 
 var IsHomeSubScreenActive by mutableStateOf(false)
+
 @Composable
 fun PlayerScreen(onOpenProfile: () -> Unit = {}) {
     val context = LocalContext.current
@@ -43,7 +79,6 @@ fun PlayerScreen(onOpenProfile: () -> Unit = {}) {
     val recommendedSongs by vm.recommendedSongs.collectAsState()
     var showCache by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
-
 
     LaunchedEffect(expanded) {
         vm.isPlayerExpanded.value = expanded
@@ -71,15 +106,16 @@ fun PlayerScreen(onOpenProfile: () -> Unit = {}) {
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        HomeContent(
+
+        // 🟢 THIS IS THE MAGIC LINK: Calling your newly isolated HomeScreen file!
+        HomeScreen(
             vm = vm,
             recommendedSongs = recommendedSongs,
             onMiniPlayerClick = { expanded = true },
             onOpenProfile = onOpenProfile,
-            showCache = showCache,                   // 🟢 Pass the state
-            onShowCacheChange = { showCache = it }   // 🟢 Pass the setter
+            showCache = showCache,
+            onShowCacheChange = { showCache = it }
         )
-
 
         if (expandAnim > 0f) {
             Box(
@@ -98,7 +134,6 @@ fun PlayerScreen(onOpenProfile: () -> Unit = {}) {
             }
         }
 
-
         // 🟢 WRAP IN A DIALOG TO COVER THE BOTTOM NAV
         if (showCache) {
             Dialog(
@@ -111,601 +146,6 @@ fun PlayerScreen(onOpenProfile: () -> Unit = {}) {
                 CacheScreen(onBack = { showCache = false })
             }
         }
-
-    } // <-- Box closing bracket
-} // <-- PlayerScreen closing bracket
-
-// ═══════════════════════════════════════
-// 🏠 HOME CONTENT
-// ═══════════════════════════════════════
-@OptIn(UnstableApi::class)
-@Composable
-fun HomeContent(
-    vm: PlayerViewModel,
-    recommendedSongs: List<com.ant.tunes.data.Song>,
-    onMiniPlayerClick: () -> Unit,
-    onOpenProfile: () -> Unit = {},
-    showCache: Boolean,
-    onShowCacheChange: (Boolean) -> Unit
-) {
-
-    val context = LocalContext.current
-
-    // 🟢 ADDED: Modern Network Connectivity Checker
-    val connectivityManager = context.getSystemService(
-        android.content.Context.CONNECTIVITY_SERVICE
-    ) as android.net.ConnectivityManager
-    val network = connectivityManager.activeNetwork
-    val capabilities = connectivityManager.getNetworkCapabilities(network)
-    val isOnline = capabilities != null && (
-            capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) ||
-                    capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) ||
-                    capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)
-            )
-
-    val currentSong by PlayerManager.currentSong.collectAsState()
-    val isPlaying by PlayerManager.isPlayingFlow.collectAsState()
-    val position by PlayerManager.currentPosition.collectAsState()
-    val duration by PlayerManager.duration.collectAsState()
-    val progress = if (duration > 0) position.toFloat() / duration else 0f
-
-    val downloadedSongs by PlayerManager.downloadedSongs.collectAsState()
-    var showOffline by remember { mutableStateOf(false) }
-    // 🟢 Tells MainActivity to hide the nav bars when these screens are open
-    LaunchedEffect(showCache, showOffline) {
-        com.ant.tunes.ui.IsHomeSubScreenActive = showCache || showOffline
-    }
-
-    // 🟢 Intercepts Android Hardware Back Button to close the Offline screen cleanly
-    androidx.activity.compose.BackHandler(enabled = showOffline) {
-        showOffline = false
-    }
-
-    // 🟢 Read Username from SharedPreferences
-    val prefs = context.getSharedPreferences("ant_prefs", android.content.Context.MODE_PRIVATE)
-    val userName by remember { mutableStateOf(prefs.getString("user_name", "Listener")?.ifEmpty { "Listener" } ?: "Listener") }
-
-    // 🟢 REAL DATA STATEFLOWS
-    val localRecent by PlayerManager.recentlyPlayed.collectAsState()
-    val localTopTracks by PlayerManager.topTracks.collectAsState()
-    val lastFmRecent by vm.lastFmRecentTracks.collectAsState()
-    val lastFmTop by vm.lastFmTopTracks.collectAsState()
-    val isLastFmConnected by LastFmAuthManager.isLoggedIn.collectAsState()
-
-    // 🟢 FETCH THE FALLBACK CHARTS
-    val publicCharts by vm.publicCharts.collectAsState()
-
-    // ✅ DYNAMIC FALLBACK LOGIC
-    val recentSongs = when {
-        isLastFmConnected && lastFmRecent.isNotEmpty() -> lastFmRecent
-        localRecent.isNotEmpty() -> localRecent
-        else -> emptyList()
-    }
-
-    val topTracks = when {
-        isLastFmConnected && lastFmTop.isNotEmpty() -> lastFmTop
-        localTopTracks.isNotEmpty() -> localTopTracks
-        publicCharts.isNotEmpty() -> publicCharts // ✅ Public fallback!
-        else -> emptyList()
-    }
-
-    // 🟢 DYNAMIC SECTION LABEL
-    val topTracksLabel = when {
-        isLastFmConnected && lastFmTop.isNotEmpty() -> "YOUR TOP TRACKS"
-        localTopTracks.isNotEmpty() -> "YOUR TOP TRACKS"
-        else -> "TRENDING NOW"
-    }
-
-
-
-    val accent = LocalAccentColor.current
-    val accentDim = accent.copy(alpha = 0.15f)
-    val accentHot = accent.copy(alpha = 0.3f)
-
-    val dotAlpha by rememberInfiniteTransition(label = "dot")
-        .animateFloat(
-            initialValue = 1f, targetValue = 0.3f,
-            animationSpec = infiniteRepeatable(tween(1000), RepeatMode.Reverse),
-            label = "dotAlpha"
-        )
-
-    val vinylRotation by rememberInfiniteTransition(label = "vinyl")
-        .animateFloat(
-            initialValue = 0f, targetValue = 360f,
-            animationSpec = infiniteRepeatable(tween(6000, easing = LinearEasing)),
-            label = "vinylRot"
-        )
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-            start = 20.dp, end = 20.dp,
-            top = 0.dp, bottom = 220.dp
-        )
-    ) {
-        // 🟢 ADDED: Offline Banner (Appears first!)
-        item {
-            if (!isOnline) {
-                Spacer(Modifier.height(48.dp)) // Pushes banner below the transparent status bar
-                NoInternetBanner()
-                Spacer(Modifier.height(12.dp))
-            }
-        }
-
-        // ── HERO ──
-        item {
-            // 🟢 Pro-tip: Dynamically shrink this spacer if the banner is showing
-            Spacer(Modifier.height(if (!isOnline) 8.dp else 56.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-// ... rest of the Hero code stays the same
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(6.dp).alpha(dotAlpha).background(accent, CircleShape))
-                    Spacer(Modifier.width(8.dp))
-                    Text("ANT TUNES",
-                        style = MaterialTheme.typography.labelLarge, color = AntText3)
-                }
-                IconButton(
-                    onClick = { onOpenProfile() },
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .border(1.dp, accent.copy(alpha = 0.4f), CircleShape)
-                ) {
-                    // 🟢 FIXED: Calls your actual custom avatar instead of just the letter!
-                    com.ant.tunes.ui.AvatarDisplay(
-                        userName = userName,
-                        size = 36.dp, // Shrinks it perfectly for the top bar
-                        accent = accent
-                    )
-                }
-
-            }
-            Spacer(Modifier.height(6.dp))
-            Text("Welcome back,\n$userName",
-                style = MaterialTheme.typography.displayLarge, color = AntText)
-            Spacer(Modifier.height(24.dp))
-        }
-
-        // ── FEATURED CARD ──
-        item {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(210.dp)
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(Brush.linearGradient(listOf(accentDim, AntBlack)))
-                    .border(1.dp, accentHot, RoundedCornerShape(24.dp))
-                    .clickable { onMiniPlayerClick() }
-            ) {
-                if (!currentSong?.albumArt.isNullOrEmpty()) {
-                    AsyncImage(
-                        model = currentSong?.albumArt,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize().alpha(0.15f)
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .size(240.dp)
-                        .offset(x = 160.dp, y = (-40).dp)
-                        .blur(20.dp)
-                        .background(
-                            Brush.radialGradient(
-                                listOf(accent.copy(alpha = 0.35f), Color.Transparent)
-                            ), CircleShape
-                        )
-                )
-                Box(
-                    modifier = Modifier
-                        .size(160.dp)
-                        .align(Alignment.CenterEnd)
-                        .offset(x = 20.dp)
-                        .rotate(if (isPlaying) vinylRotation else 0f)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.sweepGradient(
-                                listOf(AntBlack, accentDim, AntBlack, accentDim, AntBlack)
-                            )
-                        )
-                        .border(1.5.dp, accentHot, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (!currentSong?.albumArt.isNullOrEmpty()) {
-                        AsyncImage(
-                            model = currentSong?.albumArt,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.size(80.dp).clip(CircleShape)
-                        )
-                    } else {
-                        Box(Modifier.size(80.dp).clip(CircleShape).background(AntSurface2))
-                    }
-                    Box(Modifier.size(14.dp).background(AntBlack, CircleShape))
-                }
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.horizontalGradient(
-                                listOf(AntBlack.copy(alpha = 0.85f), Color.Transparent),
-                                endX = 500f
-                            )
-                        )
-                )
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .fillMaxWidth(0.65f)
-                        .padding(20.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.width(16.dp).height(1.dp).background(accent))
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            if (isPlaying) "NOW PLAYING" else "LAST PLAYED",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = accent
-                        )
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        currentSong?.title ?: "Play Something",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = AntText, maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        currentSong?.artist ?: "Search a song to start",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = AntText2, maxLines = 1
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth().height(3.dp)
-                        .align(Alignment.BottomCenter)
-                        .background(AntGlassBorder)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .fillMaxWidth(progress)
-                            .background(accent)
-                    )
-                }
-            }
-            Spacer(Modifier.height(28.dp))
-        }
-
-        // ── SMART CACHE ALBUM ──
-// 🔥 Look at recentSongs instead of globalHistory!
-        val cachedSongs = recentSongs.filter { s -> CacheManager.isCached(context, s.streamUrl) }
-
-        if (cachedSongs.isNotEmpty()) {
-            item {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("SMART CACHE",
-                        style = MaterialTheme.typography.labelLarge, color = AntText3)
-                    Text("${cachedSongs.size} TRACKS",
-                        style = MaterialTheme.typography.labelSmall, color = accent)
-                }
-                Spacer(Modifier.height(12.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(AntSurface1)
-                        .border(1.dp, AntGlassBorder, RoundedCornerShape(20.dp))
-                        .clickable { onShowCacheChange(true) } // 🟢 You'll need this state for navigation
-                        .padding(16.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // ── THE DYNAMIC THUMBNAIL ──
-                        Box(modifier = Modifier.size(64.dp).clip(RoundedCornerShape(12.dp))) {
-                            if (cachedSongs.size >= 4) {
-                                Column {
-                                    Row {
-                                        AsyncImage(model = cachedSongs[0].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
-                                        AsyncImage(model = cachedSongs[1].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
-                                    }
-                                    Row {
-                                        AsyncImage(model = cachedSongs[2].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
-                                        AsyncImage(model = cachedSongs[3].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
-                                    }
-                                }
-                            } else {
-                                AsyncImage(
-                                    model = cachedSongs[0].albumArt,
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            }
-                        }
-                        Spacer(Modifier.width(14.dp))
-
-                        // ── TEXT LABELS ──
-                        Column(Modifier.weight(1f)) {
-                            Text("Smart Cache",
-                                style = MaterialTheme.typography.titleSmall, color = AntText)
-                            Text("${cachedSongs.size} songs • auto-cached",
-                                style = MaterialTheme.typography.labelMedium, color = AntText2)
-                        }
-
-                        // ── PLAY BUTTON ──
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = "Play Cache",
-                            tint = accent,
-                            modifier = Modifier
-                                .size(40.dp)
-                                .background(accent.copy(alpha = 0.15f), CircleShape) // Using accentDim equivalent
-                                .padding(8.dp)
-                        )
-                    }
-                }
-                Spacer(Modifier.height(28.dp))
-            }
-        }
-
-        // ── MADE FOR YOU (LAST.FM DISCOVER) ──
-        if (recommendedSongs.isNotEmpty()) {
-            item {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("MADE FOR YOU", style = MaterialTheme.typography.labelLarge, color = AntText3)
-                    Text("DISCOVER", style = MaterialTheme.typography.labelSmall, color = accent)
-                }
-                Spacer(Modifier.height(12.dp))
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(end = 8.dp)
-                ) {
-                    items(recommendedSongs) { song ->
-                        Column(
-                            modifier = Modifier
-                                .width(140.dp)
-                                .clickable {
-                                    // 🟢 FIXED: Loads the entire "Made For You" list as a queue!
-                                    PlayerManager.play(context, recommendedSongs, recommendedSongs.indexOf(song))
-                                    RequestFullScreenPlayer = true
-                                }
-
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(140.dp)
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(AntSurface2)
-                            ) {
-                                AsyncImage(
-                                    model = song.albumArt,
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                                // 🟢 The Nothing OS "Match" Badge
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .padding(8.dp)
-                                        .background(AntBlack.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
-                                        .border(0.5.dp, accentHot, RoundedCornerShape(8.dp))
-                                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                                ) {
-                                    Text("98% Match", style = MaterialTheme.typography.labelSmall, color = accent, fontSize = 8.sp)
-                                }
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            Text(song.title,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = AntText, maxLines = 1,
-                                overflow = TextOverflow.Ellipsis)
-                            Text(song.artist,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = AntText2, maxLines = 1)
-                        }
-                    }
-                }
-                Spacer(Modifier.height(28.dp))
-            }
-        }
-
-        // ── OFFLINE ALBUM ──
-        if (downloadedSongs.isNotEmpty()) {
-            item {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("OFFLINE ALBUM",
-                        style = MaterialTheme.typography.labelLarge, color = AntText3)
-                    Text("${downloadedSongs.size} TRACKS",
-                        style = MaterialTheme.typography.labelSmall, color = accent)
-                }
-                Spacer(Modifier.height(12.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(AntSurface1)
-                        .border(1.dp, AntGlassBorder, RoundedCornerShape(20.dp))
-                        .clickable { showOffline = true }
-                        .padding(16.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.size(64.dp).clip(RoundedCornerShape(12.dp))) {
-                            if (downloadedSongs.size >= 4) {
-                                Column {
-                                    Row {
-                                        AsyncImage(model = downloadedSongs[0].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
-                                        AsyncImage(model = downloadedSongs[1].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
-                                    }
-                                    Row {
-                                        AsyncImage(model = downloadedSongs[2].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
-                                        AsyncImage(model = downloadedSongs[3].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
-                                    }
-                                }
-                            } else {
-                                AsyncImage(
-                                    model = downloadedSongs[0].albumArt,
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            }
-                        }
-                        Spacer(Modifier.width(14.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("My Downloads",
-                                style = MaterialTheme.typography.titleSmall, color = AntText)
-                            Text("${downloadedSongs.size} songs • offline",
-                                style = MaterialTheme.typography.labelMedium, color = AntText2)
-                        }
-                        Icon(
-                            Icons.Default.PlayArrow, null,
-                            tint = accent,
-                            modifier = Modifier
-                                .size(40.dp)
-                                .background(accentDim, CircleShape)
-                                .padding(8.dp)
-                        )
-                    }
-                }
-                Spacer(Modifier.height(28.dp))
-            }
-        }
-
-        // ── RECENTLY PLAYED ──
-        if (recentSongs.isNotEmpty()) {
-            item {
-                Text("RECENTLY PLAYED",
-                    style = MaterialTheme.typography.labelLarge, color = AntText3)
-                Spacer(Modifier.height(12.dp))
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(end = 8.dp)
-                ) {
-                    items(recentSongs) { song ->
-                        // PATCH 3 — trigger expand on tap
-                        Column(
-                            modifier = Modifier
-                                .width(120.dp)
-                                .clickable {
-                                    PlayerManager.play(context, recentSongs, recentSongs.indexOf(song))
-                                    RequestFullScreenPlayer = true
-                                }
-
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(120.dp)
-                                    .clip(RoundedCornerShape(16.dp))
-                            ) {
-                                AsyncImage(
-                                    model = song.albumArt,
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(Color.Black.copy(alpha = 0.3f)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        Icons.Default.PlayArrow, null,
-                                        tint = Color.White.copy(alpha = 0.8f),
-                                        modifier = Modifier.size(28.dp)
-                                    )
-                                }
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            Text(song.title,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = AntText, maxLines = 1,
-                                overflow = TextOverflow.Ellipsis)
-                            Text(song.artist,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = AntText2, maxLines = 1)
-                        }
-                    }
-                }
-                Spacer(Modifier.height(28.dp))
-            }
-        }
-
-        // (Up Next Queue Removed from Home Screen)
-
-        // ── TOP TRACKS / TRENDING NOW ──
-        if (topTracks.isNotEmpty()) {
-            item {
-                Text(topTracksLabel,
-                    style = MaterialTheme.typography.labelLarge, color = AntText3)
-
-                Spacer(Modifier.height(12.dp))
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(end = 8.dp)
-                ) {
-                    items(topTracks.take(10)) { song ->
-
-                    // PATCH 3 — trigger expand on tap
-                        Column(
-                            modifier = Modifier
-                                .width(120.dp)
-                                .clickable {
-                                    val top10List = topTracks.take(10)
-                                    PlayerManager.play(context, top10List, top10List.indexOf(song))
-                                    RequestFullScreenPlayer = true
-                                }
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(120.dp)
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(AntSurface2)
-                            ) {
-                                AsyncImage(
-                                    model = song.albumArt,
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            Text(song.title,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = AntText, maxLines = 1,
-                                overflow = TextOverflow.Ellipsis)
-                            Text(song.artist,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = AntText2, maxLines = 1)
-                        }
-                    }
-                }
-                Spacer(Modifier.height(28.dp))
-            }
-        }
-    }
-
-    if (showOffline) {
-        OfflineScreen(onBack = { showOffline = false })
     }
 }
 
@@ -718,18 +158,16 @@ fun FullPlayer(isPlaying: Boolean, onCollapse: () -> Unit) {
     val currentSong by PlayerManager.currentSong.collectAsState()
 
     var showQueue by remember { mutableStateOf(false) }
-    var showOptionsMenu by remember { mutableStateOf(false) } // 🟢 ADDED MENU STATE
+    var showOptionsMenu by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableStateOf("Art") }
 
-    val vm: PlayerViewModel = viewModel() // 🟢 Needed for Lyrics
+    val vm: PlayerViewModel = viewModel()
     val currentLyrics by vm.currentLyrics
     val isLyricsLoading by vm.isLyricsLoading
     var isLyricsFullScreen by remember { mutableStateOf(false) }
-    val lrcLines by vm.currentLrcLines  // ✅ new state
+    val lrcLines by vm.currentLrcLines
     val accent = LocalAccentColor.current
 
-
-    // PATCH 2 — liked state
     val isLiked = currentSong?.let { song ->
         globalLikedSongs.any { it.id == song.id }
     } ?: false
@@ -760,7 +198,6 @@ fun FullPlayer(isPlaying: Boolean, onCollapse: () -> Unit) {
                     )
                 }
 
-                // Art / Lyrics toggle
                 Row(
                     modifier = Modifier
                         .height(36.dp)
@@ -796,10 +233,8 @@ fun FullPlayer(isPlaying: Boolean, onCollapse: () -> Unit) {
                     }
                 }
 
-                // 🟢 WIRED 3-DOT MENU
                 IconButton(onClick = { showOptionsMenu = true }, modifier = Modifier.size(48.dp)) {
-
-                Icon(
+                    Icon(
                         Icons.Default.MoreVert, "Options",
                         tint = Color.White,
                         modifier = Modifier.size(28.dp)
@@ -816,7 +251,6 @@ fun FullPlayer(isPlaying: Boolean, onCollapse: () -> Unit) {
                 if (selectedTab == "Art") {
                     VinylArt(imageUrl = currentSong?.albumArt, isPlaying = isPlaying)
                 } else {
-                    // 🟢 WIRED LYRICS TAB
                     LyricsTab(
                         lyrics = currentLyrics,
                         isLoading = isLyricsLoading,
@@ -825,21 +259,17 @@ fun FullPlayer(isPlaying: Boolean, onCollapse: () -> Unit) {
                         onToggleFullScreen = { isLyricsFullScreen = !isLyricsFullScreen }
                     )
                 }
-
             }
 
-            // 🟢 SMART ARTIST + ALBUM FORMATTER
-            // Clean up junk that NewPipe sometimes adds to the artist name
             val rawArtist = currentSong?.artist?.replace(" • YouTube", "", ignoreCase = true) ?: "Unknown Artist"
             val rawAlbum = currentSong?.album ?: ""
             val rawTitle = currentSong?.title ?: ""
 
-            // Only attach the album if it's valid AND it's not the fake "YouTube" album
             val displayArtistText = if (
                 rawAlbum.isNotBlank() &&
                 rawAlbum.lowercase() != rawArtist.lowercase() &&
                 rawAlbum.lowercase() != rawTitle.lowercase() &&
-                rawAlbum.lowercase() != "youtube" // 🔥 Kills the duplicate!
+                rawAlbum.lowercase() != "youtube"
             ) {
                 "$rawArtist  •  $rawAlbum"
             } else {
@@ -849,7 +279,7 @@ fun FullPlayer(isPlaying: Boolean, onCollapse: () -> Unit) {
             ControlBar(
                 context = context,
                 title = currentSong?.title ?: "Play Something",
-                artist = displayArtistText, // 🔥 Fixed formatter injected here!
+                artist = displayArtistText,
                 album = currentSong?.album ?: "",
                 onPrev = { PlayerManager.previous() },
                 onPlayPause = { PlayerManager.togglePlayPause() },
@@ -906,7 +336,6 @@ fun FullPlayer(isPlaying: Boolean, onCollapse: () -> Unit) {
                         }
                     }
                     Spacer(Modifier.height(24.dp))
-                    // ✅ THIS IS THE FIXED LINE:
                     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                         QueuePanel(
                             isExpanded = true,
@@ -923,14 +352,12 @@ fun FullPlayer(isPlaying: Boolean, onCollapse: () -> Unit) {
                 modifier = Modifier
                     .fillMaxSize()
                     .background(AntBlack)
-                    // swipe down to exit
                     .pointerInput(Unit) {
                         detectVerticalDragGestures { _, dragAmount ->
                             if (dragAmount > 40f) isLyricsFullScreen = false
                         }
                     }
             ) {
-                // glass card container
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -948,7 +375,6 @@ fun FullPlayer(isPlaying: Boolean, onCollapse: () -> Unit) {
                     )
                 }
 
-                // drag handle
                 Box(
                     modifier = Modifier
                         .width(40.dp)
@@ -960,11 +386,10 @@ fun FullPlayer(isPlaying: Boolean, onCollapse: () -> Unit) {
             }
         }
     }
-    // ── OPTIONS MENU BOTTOM SHEET ──
+
     if (showOptionsMenu) {
         PlayerOptionsMenu(onDismiss = { showOptionsMenu = false })
     }
-
 }
 
 // ═══════════════════════════════════════
@@ -990,12 +415,11 @@ fun MiniPlayerBar(
             .fillMaxWidth()
             .height(67.dp)
             .clip(RoundedCornerShape(32.dp))
-            .background(AntBlack.copy(alpha = 0.80f)) // 🟢 Deep black tint to block the background
-            .border(1.dp, accent.copy(alpha = 0.4f), RoundedCornerShape(36.dp)) // 🟢 Thin accent border
+            .background(AntBlack.copy(alpha = 0.80f))
+            .border(1.dp, accent.copy(alpha = 0.4f), RoundedCornerShape(36.dp))
             .clickable { onClick() }
     ) {
-
-    Row(
+        Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxSize()
@@ -1063,4 +487,3 @@ fun MiniPlayerBar(
         }
     }
 }
-

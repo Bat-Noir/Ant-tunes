@@ -34,7 +34,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private var recPage = 1
     private var recHasMore = true
-    private var isLoadingRecommendations = false
+    // 🟢 Upgraded to a StateFlow so HomeScreen can track the loading spinner
+    val isLoadingRecommendations = MutableStateFlow(false)
 
     private val _isSearching = mutableStateOf(false)
     val loading: State<Boolean> = _isSearching
@@ -461,11 +462,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     // ═══════════════════════════════════════
 
     // 🟢 DYNAMIC RECOMMENDATION QUEUE ENGINE
-    fun loadMoreRecommendations(seedSong: Song) {
-        if (isLoadingRecommendations) return
+     fun loadMoreRecommendations(seedSong: Song) {
+        if (isLoadingRecommendations.value) return // 🟢 FIXED: Added .value
         viewModelScope.launch {
             try {
-                isLoadingRecommendations = true
+                isLoadingRecommendations.value = true // 🟢 FIXED: Added .value
                 val artistToSearch = seedSong.artist.split(",").firstOrNull()?.trim() ?: seedSong.artist
 
                 val response = RetrofitClient.api.searchSongs(query = artistToSearch, page = recPage, limit = 30)
@@ -497,7 +498,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: Exception) {
                 e.printStackTrace()
             } finally {
-                isLoadingRecommendations = false
+                isLoadingRecommendations.value = false // 🟢 FIXED: Added .value
             }
         }
     }
@@ -612,38 +613,51 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // 🟢 Smart recommendations via Last.fm global similar tracks (NO LOGIN REQUIRED)
+    // 🟢 Smart recommendations via Last.fm global similar tracks (NO LOGIN REQUIRED)
     fun loadLastFmRecommendations(currentSong: Song) {
+        if (isLoadingRecommendations.value) return
+
         viewModelScope.launch {
-            // 🔥 We removed the login check! It just uses your API key now.
-            val similar = LastFmRepository.getSimilarTracks(track = currentSong.title, artist = currentSong.artist)
-            if (similar.isEmpty()) {
-                // If Last.fm fails to find similar songs, fallback to Saavn
-                loadMoreRecommendations(currentSong)
-                return@launch
-            }
+            try {
+                isLoadingRecommendations.value = true
+                val similar = LastFmRepository.getSimilarTracks(track = currentSong.title, artist = currentSong.artist)
+                if (similar.isEmpty()) {
+                    loadMoreRecommendations(currentSong)
+                    return@launch
+                }
 
-            val resolved = similar.mapNotNull { track ->
-                try {
-                    val query = "${track.name} ${track.artist}"
-                    val response = RetrofitClient.api.searchSongs(query = query, page = 1, limit = 3)
-                    val best = response.body()?.data?.results?.firstOrNull() ?: return@mapNotNull null
-                    val url = best.downloadUrl.lastOrNull()?.url ?: return@mapNotNull null
+                // 🟢 FIXED: Fetch up to 12 songs IN PARALLEL for lightning-fast speeds
+                val resolved = kotlinx.coroutines.coroutineScope {
+                    similar.take(12).map { track ->
+                        async(Dispatchers.IO) {
+                            try {
+                                val query = "${track.name} ${track.artist}"
+                                val response = RetrofitClient.api.searchSongs(query = query, page = 1, limit = 2)
+                                val best = response.body()?.data?.results?.firstOrNull() ?: return@async null
+                                val url = best.downloadUrl.lastOrNull()?.url ?: return@async null
 
-                    Song(
-                        id = best.id,
-                        title = track.name,
-                        artist = track.artist,
-                        albumArt = best.image.lastOrNull()?.url ?: "",
-                        streamUrl = url,
-                        source = "saavn"
-                    )
-                } catch (e: Exception) { null }
-            }
+                                Song(
+                                    id = best.id,
+                                    title = track.name,
+                                    artist = track.artist,
+                                    albumArt = best.image.lastOrNull()?.url ?: "",
+                                    streamUrl = url,
+                                    source = "saavn"
+                                )
+                            } catch (e: Exception) { null }
+                        }
+                    }.awaitAll().filterNotNull()
+                }
 
-            if (resolved.isNotEmpty()) {
-                val combined = (_recommendedSongs.value + resolved).distinctBy { it.id }
-                _recommendedSongs.value = combined
-                PlayerManager.addToQueue(resolved)
+                if (resolved.isNotEmpty()) {
+                    val combined = (resolved + _recommendedSongs.value).distinctBy { it.id }.take(30)
+                    _recommendedSongs.value = combined
+                    PlayerManager.addToQueue(resolved)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                isLoadingRecommendations.value = false
             }
         }
     }
@@ -664,10 +678,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     init {
-        // Load Last.fm private data ONLY if they bothered to log in
+        // 🟢 1. ALWAYS load trending data immediately for all users
+        fetchPublicCharts()
+
+        // 🟢 2. ONLY load private data if they logged into Last.fm
         if (LastFmAuthManager.isLoggedIn.value) {
             fetchLastFmData()
-            fetchPublicCharts()
         }
 
         // 🔥 ALWAYS use Last.fm for the queue, logged in or not!
@@ -675,10 +691,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             loadLastFmRecommendations(seedSong)
         }
 
-        // 🟢 AUTO-FETCH LYRICS
+        // 🟢 4. Auto-fetch lyrics
         viewModelScope.launch {
             PlayerManager.currentSong.collect { song ->
-                fetchLyrics(song)
+                if (song != null) {
+                    fetchLyrics(song)
+                    // 🟢 DELETED the LocalHistoryManager tracker from here!
+                }
             }
         }
     }

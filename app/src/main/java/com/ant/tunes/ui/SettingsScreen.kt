@@ -61,11 +61,9 @@ import com.ant.tunes.ui.theme.AntText3
 
 val AccentColors = listOf(
     Color(0xFFDC143C), Color(0xFF8A2BE2), Color(0xFF0EA5E9), Color(0xFF10B981),
-    Color(0xFFF59E0B), Color(0xFFE11D48), Color(0xFF14B8A6), Color(0xFF94A3B8),
-    Color(0xFFF97316), Color(0xFFEC4899), Color(0xFFEAB308), Color(0xFF38BDF8)
+    Color(0xFFF59E0B), Color(0xFFA733FF), Color(0xFF14B8A6), Color(0xFF94A3B8),
+    Color(0xFFF97316), Color(0xFFEC4899), Color(0xFFC67B33), Color(0xFF38BDF8)
 )
-
-val EqPresets = listOf("Flat", "Bass Boost", "Acoustic", "Electronic", "Vocal")
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -73,20 +71,17 @@ fun SettingsScreen(onClose: () -> Unit) {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("ant_prefs", Context.MODE_PRIVATE)
 
-    var selectedColorInt by remember { mutableIntStateOf(prefs.getInt("accent_color", android.graphics.Color.parseColor("#0EA5E9"))) }
+    // 🟢 FIXED: Default color changed to Crimson Red (#DC143C)
+    var selectedColorInt by remember { mutableIntStateOf(prefs.getInt("accent_color", android.graphics.Color.parseColor("#DC143C"))) }
     val activeAccent = Color(selectedColorInt)
-
-    var selectedEq by remember { mutableStateOf(prefs.getString("eq_preset", "Flat") ?: "Flat") }
 
     var gapless by remember { mutableStateOf(prefs.getBoolean("gapless_playback", false)) }
 
-    // 🟢 ADDED: New Audio States
-    var crossfade by remember { mutableStateOf(prefs.getBoolean("crossfade", false)) }
-    var showLyricsByDefault by remember { mutableStateOf(prefs.getBoolean("lyrics_default", false)) }
+    // 🟢 Audio States
 
 
-    // 🟢 SMART CACHE STATES
-    var cacheEnabled by remember { mutableStateOf(prefs.getBoolean("cache_enabled", true)) }
+    // 🟢 FIXED: Smart Cache default is now off (false)
+    var cacheEnabled by remember { mutableStateOf(prefs.getBoolean("cache_enabled", false)) }
     var cacheLimitMB by remember { mutableFloatStateOf(prefs.getInt("cache_limit_mb", 500).toFloat()) }
 
     var stealthMode by remember { mutableStateOf(prefs.getBoolean("stealth", false)) }
@@ -149,23 +144,6 @@ fun SettingsScreen(onClose: () -> Unit) {
                 }
 
                 HorizontalDivider(color = AntGlassBorder, thickness = 1.dp)
-
-                // 🟢 ADDED: Crossfade
-                SettingsToggleRow("Crossfade", "Smooth transitions between songs", crossfade, activeAccent) {
-                    crossfade = it
-                    prefs.edit().putBoolean("crossfade", it).apply()
-                }
-
-                HorizontalDivider(color = AntGlassBorder, thickness = 1.dp)
-
-                // 🟢 ADDED: Show Lyrics by Default
-                SettingsToggleRow("Show Lyrics by Default", "Open full player in Lyrics tab", showLyricsByDefault, activeAccent) {
-                    showLyricsByDefault = it
-                    prefs.edit().putBoolean("lyrics_default", it).apply()
-                }
-
-                HorizontalDivider(color = AntGlassBorder, thickness = 1.dp)
-
 
                 // 🟢 SMART CACHING TOGGLE
                 SettingsToggleRow("Smart Caching", "Automatically cache songs for offline playback", cacheEnabled, activeAccent) {

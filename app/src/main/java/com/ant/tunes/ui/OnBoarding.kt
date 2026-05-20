@@ -200,7 +200,7 @@ fun OnboardingScreen(onFinish: (String) -> Unit) {
                     1 -> StepContent(
                         tag = "PRO CONTROLS",
                         title = "Built For\nSpeed.",
-                        subtitle = "Swipe left on any track to 'Play Next'. Your heavy rotation auto-caches for offline play. Swipe, tap, vibe.",
+                        subtitle = "Swipe left on any searched track to 'Play Next'. Your heavy rotation auto-caches for offline play. Swipe, tap, vibe.",
                         accent = accent
                     )
                     2 -> {

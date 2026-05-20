@@ -179,14 +179,18 @@ object PlayerManager {
     @OptIn(UnstableApi::class)
     fun init(context: Context) {
         appContext = context.applicationContext
-        loadHistory() // 🟢 Load saved history on startup
 
         if (player == null) {
             // 🟢 Inject the Cache DataSource Factory
             val dataSourceFactory = CacheManager.getCacheDataSourceFactory(context)
 
+            // 🔥 THE MAGIC LINK: Tell Media3 to actually use our Cache Engine!
+            val mediaSourceFactory = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context)
+                .setDataSourceFactory(dataSourceFactory)
+
             // 🟢 NATIVE FIX: Handles Audio Focus, Phone Calls, and BT/Headphone disconnects!
             player = androidx.media3.exoplayer.ExoPlayer.Builder(context)
+                .setMediaSourceFactory(mediaSourceFactory) // 🔥 CACHE IS NOW WIRED INTO THE VEINS
                 .setAudioAttributes(
                     androidx.media3.common.AudioAttributes.Builder()
                         .setUsage(androidx.media3.common.C.USAGE_MEDIA)
@@ -197,8 +201,6 @@ object PlayerManager {
                 .setHandleAudioBecomingNoisy(true) // Pauses on headphone/BT unplug
                 .build()
 
-
-
             player?.repeatMode = Player.REPEAT_MODE_OFF
             // 🟢 Apply saved audio tweaks (Gapless, etc.)
             applyAudioTweaks(context)
@@ -208,7 +210,17 @@ object PlayerManager {
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     _isPlaying.value = isPlaying
+
+                    // 🟢 NEW: ONLY track the song if audio successfully starts playing!
+                    if (isPlaying) {
+                        _currentSong.value?.let { song ->
+                            appContext?.let { ctx ->
+                                com.ant.tunes.player.LocalHistoryManager.trackSongPlayed(ctx, song)
+                            }
+                        }
+                    }
                 }
+
 
                 override fun onMediaItemTransition(item: androidx.media3.common.MediaItem?, reason: Int) {
                     val index = player?.currentMediaItemIndex ?: 0
@@ -559,10 +571,13 @@ object PlayerManager {
         saveLibrary(context)
     }
 
+    @OptIn(UnstableApi::class)
     fun play(context: Context, songs: List<Song>, index: Int) {
         // 🟢 UX FIX: Instantly update UI and trigger the loading shimmer!
         _currentSong.value = songs.getOrNull(index)
         _isBuffering.value = true
+   // Add this inside your play() function in PlayerManager.kt
+        LocalHistoryManager.trackSongPlayed(context, songs[index])
 
         val intent = Intent(context, MusicService::class.java)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
@@ -589,9 +604,13 @@ object PlayerManager {
                 when (song.resolvedSourceType()) {
                     SourceType.GAANA -> MediaItem.Builder()
                         .setUri(url)
+                        .setCustomCacheKey(song.id) // 🟢 MAGIC KEY
                         .setMimeType("application/x-mpegURL")
                         .build()
-                    else -> MediaItem.fromUri(url)
+                    else -> MediaItem.Builder()
+                        .setUri(url)
+                        .setCustomCacheKey(song.id) // 🟢 MAGIC KEY
+                        .build()
                 }
             }
 
@@ -605,6 +624,7 @@ object PlayerManager {
         }
     }
 
+    @OptIn(UnstableApi::class)
     fun addToQueue(newSongs: List<Song>) {
         if (newSongs.isEmpty()) return
 
@@ -625,15 +645,17 @@ object PlayerManager {
 
         val mediaItems = filtered.map { song ->
             when (song.source) {
-                "gaana" -> MediaItem.Builder().setUri(song.streamUrl).setMimeType("application/x-mpegURL").build()
-                else -> MediaItem.fromUri(song.streamUrl)
+                "gaana" -> MediaItem.Builder().setUri(song.streamUrl).setCustomCacheKey(song.id).setMimeType("application/x-mpegURL").build()
+                else -> MediaItem.Builder().setUri(song.streamUrl).setCustomCacheKey(song.id).build()
             }
         }
+
 
         player?.addMediaItems(mediaItems)
     }
 
     // 🟢 NEW: Inserts song exactly after the current playing song
+    @OptIn(UnstableApi::class)
     fun insertNext(song: Song, context: Context) {
         if (playlist.isEmpty() || player == null) {
             play(context, listOf(song), 0)
@@ -652,8 +674,8 @@ object PlayerManager {
         CoroutineScope(Dispatchers.IO).launch {
             val url = PlaybackRepository.getFreshStreamUrl(context, song) ?: song.streamUrl
             val mediaItem = when (song.resolvedSourceType()) {
-                SourceType.GAANA -> androidx.media3.common.MediaItem.Builder().setUri(url).setMimeType("application/x-mpegURL").build()
-                else -> androidx.media3.common.MediaItem.fromUri(url)
+                SourceType.GAANA -> androidx.media3.common.MediaItem.Builder().setUri(url).setCustomCacheKey(song.id).setMimeType("application/x-mpegURL").build()
+                else -> androidx.media3.common.MediaItem.Builder().setUri(url).setCustomCacheKey(song.id).build()
             }
 
             withContext(Dispatchers.Main) {
@@ -662,6 +684,7 @@ object PlayerManager {
         }
     }
 
+    @OptIn(androidx.media3.common.util.UnstableApi::class)
     fun playStream(context: Context, song: Song) {
         // 🟢 UX FIX: Instantly update UI and trigger the loading shimmer!
         _currentSong.value = song
@@ -689,10 +712,15 @@ object PlayerManager {
                 val mediaItem = when (song.resolvedSourceType()) {
                     SourceType.GAANA -> MediaItem.Builder()
                         .setUri(url)
+                        .setCustomCacheKey(song.id)
                         .setMimeType("application/x-mpegURL")
                         .build()
-                    else -> MediaItem.fromUri(url)
+                    else -> MediaItem.Builder()
+                        .setUri(url)
+                        .setCustomCacheKey(song.id)
+                        .build()
                 }
+
 
                 player?.setMediaItem(mediaItem)
                 player?.prepare()
@@ -769,8 +797,8 @@ object PlayerManager {
         songs.forEach { playedSongFingerprints.add(generateFingerprint(it)) }
 
         val mediaItems = songs.map {
-            if (it.isDownloaded) MediaItem.fromUri(it.localPath)
-            else MediaItem.fromUri(it.streamUrl)
+            if (it.isDownloaded) MediaItem.Builder().setUri(it.localPath ?: "").setCustomCacheKey(it.id).build()
+            else MediaItem.Builder().setUri(it.streamUrl).setCustomCacheKey(it.id).build()
         }
 
         player?.setMediaItems(mediaItems)

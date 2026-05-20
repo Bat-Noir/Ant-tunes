@@ -15,8 +15,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-// 🟢 1. Create the Local Provider to hold the active accent color
-val LocalAccentColor = compositionLocalOf { Color(0xFF0EA5E9) }
+// 🟢 1. Create the Local Provider to hold the active accent color (FIXED DEFAULT)
+val LocalAccentColor = compositionLocalOf { Color(0xFFDC143C) }
 
 @Composable
 fun AntTunesTheme(
@@ -26,14 +26,16 @@ fun AntTunesTheme(
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("ant_prefs", Context.MODE_PRIVATE)
 
-    var accentColorInt by remember { mutableIntStateOf(prefs.getInt("accent_color", 0xFF0EA5E9.toInt())) }
+    // 🟢 FIXED DEFAULT: Swapped 0xFF0EA5E9 to 0xFFDC143C
+    var accentColorInt by remember { mutableIntStateOf(prefs.getInt("accent_color", 0xFFDC143C.toInt())) }
     var isDark by remember { mutableStateOf(prefs.getBoolean("dark_mode", true)) }
     var isAmoled by remember { mutableStateOf(prefs.getBoolean("amoled_black", true)) }
 
     DisposableEffect(prefs) {
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { sharedPreferences, key ->
             when (key) {
-                "accent_color" -> accentColorInt = sharedPreferences.getInt(key, 0xFF0EA5E9.toInt())
+                // 🟢 FIXED DEFAULT: Swapped 0xFF0EA5E9 to 0xFFDC143C
+                "accent_color" -> accentColorInt = sharedPreferences.getInt(key, 0xFFDC143C.toInt())
                 "dark_mode"    -> isDark = sharedPreferences.getBoolean(key, true)
                 "amoled_black" -> isAmoled = sharedPreferences.getBoolean(key, true)
             }
