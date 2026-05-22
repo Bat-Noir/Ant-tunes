@@ -11,6 +11,24 @@ import kotlin.collections.emptyList
 
 object AppDataManager {
 
+    // ═══════════════════════════════════════
+    // 🟢 TELEMETRY & PLAY COUNTS (SPOTIFY WRAPPED ENGINE)
+    // ═══════════════════════════════════════
+
+    fun incrementPlayCount(context: Context, song: Song) {
+        val prefs = context.getSharedPreferences("ant_telemetry", Context.MODE_PRIVATE)
+        val currentCount = prefs.getInt("play_count_${song.id}", 0)
+        prefs.edit().putInt("play_count_${song.id}", currentCount + 1).apply()
+
+        // Optional: We can expand this later to save the whole song object
+        // if we want to build a dedicated "Most Played" UI list!
+    }
+
+    fun getPlayCount(context: Context, songId: String): Int {
+        val prefs = context.getSharedPreferences("ant_telemetry", Context.MODE_PRIVATE)
+        return prefs.getInt("play_count_$songId", 0)
+    }
+
     // ── LIKED SONGS ──
     fun saveLikedSongs(context: Context, songs: List<Song>) {
         val prefs = context.getSharedPreferences("ant_prefs", Context.MODE_PRIVATE)
@@ -50,6 +68,7 @@ object AppDataManager {
             emptyList()
         }
     }
+
     // ── SAVED ALBUMS ──
     fun saveAlbums(context: Context, albums: List<com.ant.tunes.ui.BrowseCard>) {
         val prefs = context.getSharedPreferences("ant_prefs", Context.MODE_PRIVATE)
@@ -132,7 +151,6 @@ object AppDataManager {
                 trackObj.put("videoId", song.videoId)
                 trackObj.put("duration", song.duration)
                 // ✅ NEVER save streamUrl — it expires!
-                // trackObj.put("streamUrl", ...) // REMOVED
                 tracksArray.put(trackObj)
             }
             obj.put("tracks", tracksArray)

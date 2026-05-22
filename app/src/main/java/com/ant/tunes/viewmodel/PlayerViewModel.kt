@@ -25,43 +25,31 @@ data class LrcLine(val timeMs: Long, val text: String)
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
 
     private val appContext = application.applicationContext
-
-
+    private var currentScrobbledSongId: String? = null
     private var searchJob: Job? = null
-
     private var searchPage = 1
     private var searchHasMore = true
-
     private var recPage = 1
     private var recHasMore = true
     // 🟢 Upgraded to a StateFlow so HomeScreen can track the loading spinner
     val isLoadingRecommendations = MutableStateFlow(false)
-
     private val _isSearching = mutableStateOf(false)
     val loading: State<Boolean> = _isSearching
-
     private val _results = mutableStateListOf<Song>()
     val searchResults: List<Song> get() = _results
-
     private val _gaanaResults = mutableStateListOf<Song>()
     val gaanaResults: List<Song> get() = _gaanaResults
-
     private val _combinedResults = mutableStateListOf<Song>()
     val combinedResults: List<Song> get() = _combinedResults
-
     private val _youtubeResults = mutableStateListOf<Song>()
     val youtubeResults: List<Song> get() = _youtubeResults
-
     private val _recommendedSongs = MutableStateFlow<List<Song>>(emptyList())
     val recommendedSongs: StateFlow<List<Song>> = _recommendedSongs
-
     private val _albumTracks = mutableStateListOf<Song>()
     val albumTracks: List<Song> get() = _albumTracks
-
     val isAlbumLoading = mutableStateOf(false)
     val isPlayerExpanded = mutableStateOf(false)
 
-    // 🟢 NEW: LYRICS STATES
     // 🟢 NEW: LYRICS STATES
     val currentLyrics = mutableStateOf<String?>(null)
     val isLyricsLoading = mutableStateOf(false)
@@ -76,6 +64,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     val lastFmRecentTracks = MutableStateFlow<List<Song>>(emptyList())
     val isLastFmConnected = MutableStateFlow(false)
 
+    // 🟢 Suggested Albums State
+    val recommendedAlbums = MutableStateFlow<List<com.ant.tunes.ui.BrowseCard>>(emptyList())
+
+    fun fetchSuggestedAlbums(artist: String) {
+        viewModelScope.launch {
+            val albums = LastFmRepository.getTopAlbums(artist)
+            recommendedAlbums.value = albums
+        }
+    }
 
     // 🟢 THE ANTI-JUNK BOUNCER
     private fun isJunk(title: String, seedSong: Song): Boolean {
@@ -87,6 +84,46 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         if (!seedIsLive && liveRegex.containsMatchIn(title)) return true
 
         return false
+    }
+    // ═══════════════════════════════════════
+    // 🟢 HOME SCREEN DYNAMIC ENGINE
+    // ═══════════════════════════════════════
+
+    val dynamicArtistName = mutableStateOf<String?>(null)
+    val dynamicArtistTracks = mutableStateListOf<Song>()
+
+    fun generateDynamicArtistRow(followedArtists: List<com.ant.tunes.ui.BrowseCard>) {
+        // If they don't follow anyone yet, or we already generated a row, skip it.
+        if (followedArtists.isEmpty() || dynamicArtistName.value != null) return
+
+        viewModelScope.launch {
+            try {
+                // 1. Pick a random artist from their library
+                val randomArtist = followedArtists.random()
+                dynamicArtistName.value = randomArtist.title
+
+                // 2. Fetch tracks based on that artist
+                val response = RetrofitClient.api.searchSongs(query = randomArtist.title, page = 1, limit = 15)
+                if (response.isSuccessful) {
+                    val apiSongs = response.body()?.data?.results ?: emptyList()
+                    val newSongs = apiSongs.mapNotNull {
+                        val url = it.downloadUrl.lastOrNull()?.url ?: return@mapNotNull null
+                        Song(
+                            id = it.id,
+                            title = it.name,
+                            artist = it.artists.primary.firstOrNull()?.name ?: "Unknown",
+                            albumArt = it.image.lastOrNull()?.url ?: "",
+                            streamUrl = url,
+                            album = it.album?.name ?: "",
+                            source = "saavn"
+                        )
+                    }
+                    dynamicArtistTracks.clear()
+                    // Shuffle the results so it feels fresh every time!
+                    dynamicArtistTracks.addAll(newSongs.shuffled().take(10))
+                }
+            } catch (e: Exception) { e.printStackTrace() }
+        }
     }
 
     // 🟢 DUAL-SOURCE LYRICS FETCHER
@@ -619,24 +656,30 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // 🟢 Smart recommendations via Last.fm global similar tracks (NO LOGIN REQUIRED)
-    // 🟢 Smart recommendations via Last.fm global similar tracks (NO LOGIN REQUIRED)
+    // 🟢 INFINITE AUTO-PILOT QUEUE ENGINE
     fun loadLastFmRecommendations(currentSong: Song) {
         if (isLoadingRecommendations.value) return
 
         viewModelScope.launch {
             try {
                 isLoadingRecommendations.value = true
+
+                // 🔥 MAX POWER: Ask Last.fm for 50 similar tracks to build a massive continuous radio station
                 val similar = LastFmRepository.getSimilarTracks(track = currentSong.title, artist = currentSong.artist)
+
                 if (similar.isEmpty()) {
-                    loadMoreRecommendations(currentSong)
+                    loadMoreRecommendations(currentSong) // Fallback to Saavn
                     return@launch
                 }
 
-                // 🟢 FIXED: Fetch up to 12 songs IN PARALLEL for lightning-fast speeds
+                // 🔥 PARALLEL RESOLUTION: Rapidly scan Saavn for the top 20 best AI matches
                 val resolved = kotlinx.coroutines.coroutineScope {
-                    similar.take(12).map { track ->
+                    similar.take(20).map { track ->
                         async(Dispatchers.IO) {
                             try {
+                                // Filter out live/karaoke junk before searching
+                                if (isJunk(track.name, currentSong)) return@async null
+
                                 val query = "${track.name} ${track.artist}"
                                 val response = RetrofitClient.api.searchSongs(query = query, page = 1, limit = 2)
                                 val best = response.body()?.data?.results?.firstOrNull() ?: return@async null
@@ -656,7 +699,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 if (resolved.isNotEmpty()) {
-                    val combined = (resolved + _recommendedSongs.value).distinctBy { it.id }.take(30)
+                    // Inject these fresh 20 tracks into the UI row AND the background player queue!
+                    val combined = (resolved + _recommendedSongs.value).distinctBy { it.id }.take(50)
                     _recommendedSongs.value = combined
                     PlayerManager.addToQueue(resolved)
                 }
@@ -793,6 +837,44 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     init {
+
+        // ═══════════════════════════════════════
+        // 🟢 THE LAST.FM SCROBBLER & TELEMETRY TRACKER
+        // ═══════════════════════════════════════
+        viewModelScope.launch {
+            PlayerManager.currentPosition.collect { position ->
+                val song = PlayerManager.currentSong.value ?: return@collect
+                val duration = PlayerManager.duration.value
+
+                // 🔥 THE RULE: If song plays for 30 seconds OR reaches 50%, it counts as a real play!
+                if (position > 30_000 || (duration > 0 && position > duration / 2)) {
+                    if (currentScrobbledSongId != song.id) {
+                        currentScrobbledSongId = song.id
+
+                        // 1. Log to our Local Telemetry
+                        com.ant.tunes.player.AppDataManager.incrementPlayCount(appContext, song)
+
+                        // 2. Silently update Last.fm to train the algorithm!
+                        if (isLastFmConnected.value) {
+                            try {
+                                // Calls your repository to scrobble the track
+                                LastFmRepository.scrobbleTrack(appContext, song.title, song.artist)
+                            } catch (e: Exception) { e.printStackTrace() }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Reset the tracker when the song changes so the next song can be counted
+        viewModelScope.launch {
+            PlayerManager.currentSong.collect { song ->
+                if (song?.id != currentScrobbledSongId) {
+                    currentScrobbledSongId = null
+                }
+            }
+        }
+
         // 🟢 1. ALWAYS load trending data immediately for all users
         fetchPublicCharts()
 

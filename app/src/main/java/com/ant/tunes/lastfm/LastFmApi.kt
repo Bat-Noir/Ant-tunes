@@ -4,6 +4,9 @@ import retrofit2.Response
 import retrofit2.http.GET
 import retrofit2.http.Query
 import com.google.gson.annotations.SerializedName
+import retrofit2.http.Field
+import retrofit2.http.FormUrlEncoded
+import retrofit2.http.POST
 
 interface LastFmApi {
 
@@ -51,17 +54,27 @@ interface LastFmApi {
         @Query("format") format: String = "json"
     ): Response<LastFmSimilarTracksResponse>
 
-    @GET("2.0/")
+    @FormUrlEncoded
+    @POST("2.0/")
     suspend fun scrobble(
-        @Query("method") method: String = "track.scrobble",
-        @Query("track") track: String,
+        @Field("method") method: String = "track.scrobble",
+        @Field("track") track: String,
+        @Field("artist") artist: String,
+        @Field("timestamp") timestamp: Long,
+        @Field("api_key") apiKey: String,
+        @Field("sk") sessionKey: String,
+        @Field("api_sig") apiSig: String,
+        @Field("format") format: String = "json"
+    ): Response<okhttp3.ResponseBody>
+
+    @GET("2.0/")
+    suspend fun getTopAlbums(
+        @Query("method") method: String = "artist.getTopAlbums",
         @Query("artist") artist: String,
-        @Query("timestamp") timestamp: Long,
+        @Query("limit") limit: Int = 10,
         @Query("api_key") apiKey: String,
-        @Query("sk") sessionKey: String,
-        @Query("api_sig") apiSig: String,
         @Query("format") format: String = "json"
-    ): Response<Any>
+    ): Response<LastFmAlbumsResponse>
 
     @GET("2.0/")
     suspend fun getToken(
@@ -119,6 +132,13 @@ data class ArtistAttr(
 data class ImageItem(
     @SerializedName("#text") val text: String?,
     val size: String?
+)
+
+data class LastFmAlbumsResponse(val topalbums: TopAlbumsBody?)
+data class TopAlbumsBody(val album: List<LastFmAlbumItem>?)
+data class LastFmAlbumItem(
+    val name: String?,
+    val image: List<ImageItem>?
 )
 
 data class LastFmPlaylistsResponse(val playlists: PlaylistsBody?)

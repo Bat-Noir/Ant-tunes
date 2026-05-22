@@ -2,6 +2,7 @@ package com.ant.tunes.lastfm
 
 import android.content.Context
 import android.util.Log
+import com.ant.tunes.ui.BrowseCard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import retrofit2.Retrofit
@@ -85,6 +86,19 @@ object LastFmRepository {
             }
         }
 
+    suspend fun getTopAlbums(artist: String): List<BrowseCard> = withContext(Dispatchers.IO) {
+        try {
+            val response = api.getTopAlbums(artist = artist, apiKey = API_KEY)
+            response.body()?.topalbums?.album?.mapNotNull { item ->
+                BrowseCard(
+                    id = item.name ?: "", // Last.fm albums are best identified by name+artist
+                    title = item.name ?: return@mapNotNull null,
+                    imageUrl = item.image?.lastOrNull()?.text ?: ""
+                )
+            } ?: emptyList()
+        } catch (e: Exception) { emptyList() }
+    }
+
     // ── TOP TRACKS ──
     suspend fun getTopTracks(context: Context): List<LastFmTopTrack> =
         withContext(Dispatchers.IO) {
@@ -150,7 +164,8 @@ object LastFmRepository {
     }
 
     // ── SCROBBLE ──
-    suspend fun scrobble(
+    // 🟢 FIXED: Now matches your PlayerViewModel call and actually performs the POST
+    suspend fun scrobbleTrack(
         context: Context,
         track: String,
         artist: String
@@ -158,24 +173,42 @@ object LastFmRepository {
         val sessionKey = getSessionKey(context) ?: return@withContext
         try {
             val timestamp = System.currentTimeMillis() / 1000
-            val sig = md5(
-                "api_key${API_KEY}artist${artist}" +
-                        "methodtrack.scrobblesk${sessionKey}" +
-                        "timestamp${timestamp}track${track}${SECRET}"
+
+            // 🟢 CRITICAL: Last.fm requires keys sorted alphabetically for the signature
+            // method, api_key, artist, sk, timestamp, track + SECRET
+            val params = sortedMapOf(
+                "api_key" to API_KEY,
+                "artist" to artist,
+                "method" to "track.scrobble",
+                "sk" to sessionKey,
+                "timestamp" to timestamp.toString(),
+                "track" to track
             )
-            api.scrobble(
-                track     = track,
-                artist    = artist,
+
+            val sigBuilder = StringBuilder()
+            params.forEach { (k, v) -> sigBuilder.append(k).append(v) }
+            sigBuilder.append(SECRET) // Append secret at the end
+            val sig = md5(sigBuilder.toString())
+
+            val response = api.scrobble(
+                track = track,
+                artist = artist,
                 timestamp = timestamp,
-                apiKey    = API_KEY,
+                apiKey = API_KEY,
                 sessionKey = sessionKey,
-                apiSig    = sig
+                apiSig = sig
             )
-            Log.d("LastFm", "✅ Scrobbled: $track by $artist")
+
+            if (response.isSuccessful) {
+                Log.d("LastFm", "✅ SUCCESSFULLY SCROBBLED: $track by $artist")
+            } else {
+                Log.e("LastFm", "❌ Scrobble failed: ${response.errorBody()?.string()}")
+            }
         } catch (e: Exception) {
-            Log.e("LastFm", "scrobble failed: ${e.message}")
+            Log.e("LastFm", "Scrobble connection error: ${e.message}")
         }
     }
+
 
     // 🟢 Fetch user's playlists via XSPF endpoint (no auth needed!)
     // 🟢 UPDATED: Now requires context to inject the Session Key
