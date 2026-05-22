@@ -9,11 +9,20 @@ class GaanaStreamResolver : StreamResolver {
         return try {
             // Try with permanentUrl (seokey) first
             if (song.permanentUrl.isNotBlank()) {
-                val detail = RetrofitClient.gaanaApi.getSong(song.permanentUrl)
-                val body = detail.body()
-                if (body?.status == true && body.audio_url?.isNotBlank() == true) {
+                // 🟢 1. Hit the dedicated STREAM endpoint first!
+                val streamDetail = RetrofitClient.gaanaApi.getStreamUrl(song.permanentUrl)
+                var audioUrl = streamDetail.body()?.audio_url
+
+                // 🟢 2. Fallback to the metadata endpoint just in case
+                if (audioUrl.isNullOrBlank()) {
+                    val detail = RetrofitClient.gaanaApi.getSong(song.permanentUrl)
+                    audioUrl = detail.body()?.audio_url
+                }
+
+                // 🟢 NO MORE STATUS TRAP. Just check if we got the link!
+                if (!audioUrl.isNullOrBlank()) {
                     Log.d("GaanaResolver", "✅ Resolved via seokey: ${song.title}")
-                    return body.audio_url
+                    return audioUrl
                 }
             }
 
@@ -24,6 +33,8 @@ class GaanaStreamResolver : StreamResolver {
                 limit = 5
             )
             val songs = response.body()?.results ?: return null
+
+            // Note: We leave this filter alone because it's just a fallback for broken links
             val match = songs.firstOrNull { it.id == song.id }
                 ?: songs.firstOrNull {
                     it.title.contains(song.title, ignoreCase = true)
@@ -31,8 +42,15 @@ class GaanaStreamResolver : StreamResolver {
                 ?: songs.firstOrNull()
 
             match?.let { s ->
-                val detail = RetrofitClient.gaanaApi.getSong(s.seokey)
-                detail.body()?.audio_url
+                // 🟢 Hit the stream endpoint here too!
+                val streamDetail = RetrofitClient.gaanaApi.getStreamUrl(s.seokey)
+                var matchedUrl = streamDetail.body()?.audio_url
+
+                if (matchedUrl.isNullOrBlank()) {
+                    val detail = RetrofitClient.gaanaApi.getSong(s.seokey)
+                    matchedUrl = detail.body()?.audio_url
+                }
+                matchedUrl
             }?.also {
                 Log.d("GaanaResolver", "✅ Resolved via search: ${song.title}")
             }

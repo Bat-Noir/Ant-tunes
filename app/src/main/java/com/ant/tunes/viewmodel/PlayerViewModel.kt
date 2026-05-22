@@ -408,23 +408,29 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             try {
                                 val songDetail = RetrofitClient.gaanaApi.getSong(gaanaSong.seokey)
                                 val body = songDetail.body()
-                                val audioUrl = body?.audio_url ?: return@async null
-                                if (body.status != true) return@async null
+
+                                // 🟢 GSON LANDMINE REMOVED! We no longer check body?.status == false
+
+                                val streamDetail = RetrofitClient.gaanaApi.getStreamUrl(gaanaSong.seokey)
+                                val streamBody = streamDetail.body()
+
+                                // 🟢 Check the dedicated stream API first, fallback to metadata link
+                                val audioUrl = streamBody?.audio_url ?: body?.audio_url ?: return@async null
 
                                 Song(
                                     id = gaanaSong.id,
-                                    title = body.title ?: gaanaSong.title,
-                                    artist = body.artist ?: gaanaSong.subtitle,
-                                    albumArt = body.thumb ?: gaanaSong.thumb,
+                                    title = body?.title ?: gaanaSong.title,
+                                    artist = body?.artist ?: gaanaSong.subtitle,
+                                    albumArt = body?.thumb ?: gaanaSong.thumb,
                                     streamUrl = audioUrl,
-                                    album = body.album_title ?: "", // 🔥 Catch the real Gaana album!
+                                    album = body?.album_title ?: "",
+                                    permanentUrl = gaanaSong.seokey,
                                     source = "gaana"
                                 )
                             } catch (e: Exception) { null }
                         }
-                    }.awaitAll().filterNotNull().filter { song ->
-                        song.title.contains(query, ignoreCase = true) || song.artist.contains(query, ignoreCase = true)
-                    }
+                    }.awaitAll().filterNotNull()
+                    // 🟢 AGGRESSIVE FILTER REMOVED! Let the API's search algorithm do the work.
                 }
                 _gaanaResults.addAll(mappedSongs)
             }
@@ -662,6 +668,115 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // ═══════════════════════════════════════
+    // 🟢 ALBUM & ARTIST SEARCH STATES
+    // ═══════════════════════════════════════
+
+    private val _albumResults = mutableStateListOf<com.ant.tunes.ui.BrowseCard>()
+    val albumSearchList: List<com.ant.tunes.ui.BrowseCard> get() = _albumResults
+
+    private val _artistResults = mutableStateListOf<com.ant.tunes.ui.BrowseCard>()
+    val artistSearchList: List<com.ant.tunes.ui.BrowseCard> get() = _artistResults
+
+    fun searchAlbums(query: String) {
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            _isSearching.value = true
+            _albumResults.clear()
+            try {
+                val response = RetrofitClient.api.searchAlbums(query = query, page = 1)
+                if (response.isSuccessful) {
+                    val albums = response.body()?.data?.results ?: emptyList()
+                    _albumResults.addAll(albums.map {
+                        com.ant.tunes.ui.BrowseCard(
+                            id = it.id,
+                            title = it.name ?: "Unknown",
+                            imageUrl = it.image.lastOrNull()?.url ?: ""
+                        )
+                    })
+                }
+            } catch (e: Exception) { e.printStackTrace() }
+            finally { _isSearching.value = false }
+        }
+    }
+
+    fun searchArtists(query: String) {
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            _isSearching.value = true
+            _artistResults.clear()
+            try {
+                val response = RetrofitClient.api.searchArtists(query = query, page = 1)
+                if (response.isSuccessful) {
+                    val artists = response.body()?.data?.results ?: emptyList()
+                    _artistResults.addAll(artists.map {
+                        com.ant.tunes.ui.BrowseCard(
+                            id = it.id,
+                            title = it.name ?: "Unknown",
+                            imageUrl = it.image.lastOrNull()?.url ?: ""
+                        )
+                    })
+                }
+            } catch (e: Exception) { e.printStackTrace() }
+            finally { _isSearching.value = false }
+        }
+    }
+    fun loadAlbumById(albumId: String) {
+        viewModelScope.launch {
+            try {
+                isAlbumLoading.value = true
+                _albumTracks.clear()
+                val response = RetrofitClient.api.getAlbumDetails(id = albumId)
+                if (response.isSuccessful) {
+                    // 🟢 FIXED: Fetching from 'songs' instead of 'results'
+                    val apiSongs = response.body()?.data?.songs ?: emptyList()
+                    val newSongs = apiSongs.mapNotNull {
+                        val url = it.downloadUrl.lastOrNull()?.url ?: return@mapNotNull null
+                        Song(
+                            id = it.id,
+                            title = it.name,
+                            artist = it.artists.primary.firstOrNull()?.name ?: "Unknown",
+                            albumArt = it.image.lastOrNull()?.url ?: "",
+                            streamUrl = url,
+                            album = it.album?.name ?: "",
+                            source = "saavn"
+                        )
+                    }
+                    _albumTracks.addAll(newSongs)
+                }
+            } catch (e: Exception) { e.printStackTrace() }
+            finally { isAlbumLoading.value = false }
+        }
+    }
+
+    fun loadArtistById(artistId: String) {
+        viewModelScope.launch {
+            try {
+                isAlbumLoading.value = true
+                _albumTracks.clear()
+                val response = RetrofitClient.api.getArtistDetails(id = artistId)
+                if (response.isSuccessful) {
+                    // 🟢 FIXED: Artists put tracks in 'topSongs' or 'songs'
+                    val data = response.body()?.data
+                    val apiSongs = data?.topSongs ?: data?.songs ?: emptyList()
+                    val newSongs = apiSongs.mapNotNull {
+                        val url = it.downloadUrl.lastOrNull()?.url ?: return@mapNotNull null
+                        Song(
+                            id = it.id,
+                            title = it.name,
+                            artist = it.artists.primary.firstOrNull()?.name ?: "Unknown",
+                            albumArt = it.image.lastOrNull()?.url ?: "",
+                            streamUrl = url,
+                            album = it.album?.name ?: "",
+                            source = "saavn"
+                        )
+                    }
+                    _albumTracks.addAll(newSongs)
+                }
+            } catch (e: Exception) { e.printStackTrace() }
+            finally { isAlbumLoading.value = false }
+        }
+    }
     private fun parseLrc(lrc: String): List<LrcLine> {
         val lines = mutableListOf<LrcLine>()
         // Regex to capture [mm:ss.xx] format

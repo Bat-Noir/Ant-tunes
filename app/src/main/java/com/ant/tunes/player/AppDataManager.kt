@@ -50,6 +50,65 @@ object AppDataManager {
             emptyList()
         }
     }
+    // ── SAVED ALBUMS ──
+    fun saveAlbums(context: Context, albums: List<com.ant.tunes.ui.BrowseCard>) {
+        val prefs = context.getSharedPreferences("ant_prefs", Context.MODE_PRIVATE)
+        val array = org.json.JSONArray()
+        albums.forEach { a ->
+            val obj = org.json.JSONObject()
+            obj.put("id", a.id)
+            obj.put("title", a.title)
+            obj.put("imageUrl", a.imageUrl)
+            array.put(obj)
+        }
+        prefs.edit().putString("saved_albums", array.toString()).apply()
+    }
+
+    fun loadSavedAlbums(context: Context): List<com.ant.tunes.ui.BrowseCard> {
+        val prefs = context.getSharedPreferences("ant_prefs", Context.MODE_PRIVATE)
+        val json = prefs.getString("saved_albums", null) ?: return emptyList()
+        return try {
+            val array = org.json.JSONArray(json)
+            (0 until array.length()).map { i ->
+                val obj = array.getJSONObject(i)
+                com.ant.tunes.ui.BrowseCard(
+                    id = obj.getString("id"),
+                    title = obj.getString("title"),
+                    imageUrl = obj.getString("imageUrl")
+                )
+            }
+        } catch (e: Exception) { emptyList() }
+    }
+
+    // ── FOLLOWED ARTISTS ──
+    fun saveArtists(context: Context, artists: List<com.ant.tunes.ui.BrowseCard>) {
+        val prefs = context.getSharedPreferences("ant_prefs", Context.MODE_PRIVATE)
+        val array = org.json.JSONArray()
+        artists.forEach { a ->
+            val obj = org.json.JSONObject()
+            obj.put("id", a.id)
+            obj.put("title", a.title)
+            obj.put("imageUrl", a.imageUrl)
+            array.put(obj)
+        }
+        prefs.edit().putString("followed_artists", array.toString()).apply()
+    }
+
+    fun loadFollowedArtists(context: Context): List<com.ant.tunes.ui.BrowseCard> {
+        val prefs = context.getSharedPreferences("ant_prefs", Context.MODE_PRIVATE)
+        val json = prefs.getString("followed_artists", null) ?: return emptyList()
+        return try {
+            val array = org.json.JSONArray(json)
+            (0 until array.length()).map { i ->
+                val obj = array.getJSONObject(i)
+                com.ant.tunes.ui.BrowseCard(
+                    id = obj.getString("id"),
+                    title = obj.getString("title"),
+                    imageUrl = obj.getString("imageUrl")
+                )
+            }
+        } catch (e: Exception) { emptyList() }
+    }
 
     // ── PLAYLISTS ──
     fun savePlaylists(context: Context, playlists: List<PlaylistData>) {

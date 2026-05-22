@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
@@ -23,10 +22,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -36,13 +37,10 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material3.BottomSheetDefaults
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -50,7 +48,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -73,7 +70,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -81,6 +77,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
@@ -110,7 +107,6 @@ var IsSearchUIActive by mutableStateOf(false)
 fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
     val results = vm.combinedResults
 
-    // 🟢 UPDATED: Use public charts if local history is empty
     val localTop by PlayerManager.topTracks.collectAsState()
     val publicCharts by vm.publicCharts.collectAsState()
     val trendingSongs = localTop.ifEmpty { publicCharts }
@@ -125,46 +121,57 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
     var query by remember { mutableStateOf("") }
     val accent = LocalAccentColor.current
     var selectedAlbum by remember { mutableStateOf<BrowseCard?>(null) }
+    var selectedArtist by remember { mutableStateOf<BrowseCard?>(null) }
+    var selectedCategory by remember { mutableStateOf("Songs") }
+    val categories = listOf("Songs", "Albums", "Artists")
 
-    // 🟢 SEARCH FILTER STATE
+    val albumResults = vm.albumSearchList
+    val artistResults = vm.artistSearchList
+
     var selectedSourceFilter by remember { mutableStateOf("All") }
     val sourceFilters = listOf("All", "Saavn", "Gaana", "YouTube")
 
-    // 🟢 FIXED: Removed 'remember' to fix the filter bug.
-    // Now it recalculates instantly the millisecond new results arrive from the background API!
     val filteredResults = if (selectedSourceFilter == "All") {
         results
     } else {
         results.filter {
-            when(selectedSourceFilter) {
+            when (selectedSourceFilter) {
                 "YouTube" -> it.source.equals("youtube", ignoreCase = true)
-                "Gaana"   -> it.source.equals("gaana", ignoreCase = true)
-                "Saavn"   -> it.source.contains("saavn", ignoreCase = true)
-                else      -> true
+                "Gaana" -> it.source.equals("gaana", ignoreCase = true)
+                "Saavn" -> it.source.contains("saavn", ignoreCase = true)
+                else -> true
             }
         }
     }
 
     IsSearchUIActive = query.isNotEmpty()
 
-    BackHandler(enabled = IsSearchUIActive || selectedAlbum != null) {
+    BackHandler(enabled = IsSearchUIActive || selectedAlbum != null || selectedArtist != null) {
         if (selectedAlbum != null) {
             selectedAlbum = null
+        } else if (selectedArtist != null) {
+            selectedArtist = null
         } else {
             query = ""
             focusManager.clearFocus()
         }
     }
 
-    // ── SEARCH HISTORY LOGIC ──
     val prefs = context.getSharedPreferences("ant_prefs", Context.MODE_PRIVATE)
     var stealthMode by remember { mutableStateOf(prefs.getBoolean("stealth", false)) }
-    var searchHistory by remember { mutableStateOf(prefs.getString("search_history", "")?.split(",")?.filter { it.isNotBlank() } ?: emptyList()) }
+    var searchHistory by remember {
+        mutableStateOf(
+            prefs.getString("search_history", "")?.split(",")?.filter { it.isNotBlank() }
+                ?: emptyList()
+        )
+    }
 
     DisposableEffect(prefs) {
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { sp, key ->
             if (key == "stealth") stealthMode = sp.getBoolean("stealth", false)
-            if (key == "search_history") searchHistory = sp.getString("search_history", "")?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
+            if (key == "search_history") searchHistory =
+                sp.getString("search_history", "")?.split(",")?.filter { it.isNotBlank() }
+                    ?: emptyList()
         }
         prefs.registerOnSharedPreferenceChangeListener(listener)
         onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
@@ -179,17 +186,19 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
         prefs.edit().putString("search_history", limited.joinToString(",")).apply()
     }
 
-    // ── REAL-TIME SEARCH DEBOUNCE ──
-    LaunchedEffect(query) {
+    LaunchedEffect(query, selectedCategory) {
         if (query.isNotBlank()) {
             delay(300)
-            vm.searchSongs(query)
+            when (selectedCategory) {
+                "Songs" -> vm.searchSongs(query)
+                "Albums" -> vm.searchAlbums(query)
+                "Artists" -> vm.searchArtists(query)
+            }
         }
     }
 
     var songToAddToPlaylist by remember { mutableStateOf<Song?>(null) }
 
-    // 🟢 FIXED: rememberUpdatedState ensures the scrolling logic always sees the live, updated list size!
     val currentFilteredSize by rememberUpdatedState(filteredResults.size)
     val currentQuery by rememberUpdatedState(query)
 
@@ -203,13 +212,10 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
             }
     }
 
-    // 🟢 UX FIX: Instantly scroll to top when changing filters so the user doesn't get stuck at the bottom of a blank page
     LaunchedEffect(selectedSourceFilter) {
         listState.scrollToItem(0)
     }
 
-
-    // ── PLAYLIST BOTTOM SHEET ──
     if (songToAddToPlaylist != null) {
         ModalBottomSheet(
             onDismissRequest = { songToAddToPlaylist = null },
@@ -247,12 +253,21 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
         }
     }
 
+    // 🟢 ROUTING TO THE NEW FILES!
     if (selectedAlbum != null) {
-        AlbumDetailView(
+        AlbumScreen(
             album = selectedAlbum!!,
             albumTracks = vm.albumTracks,
             isLoading = vm.isAlbumLoading.value,
             onBack = { selectedAlbum = null },
+            onAddToPlaylist = { songToAddToPlaylist = it }
+        )
+    } else if (selectedArtist != null) {
+        ArtistScreen(
+            artist = selectedArtist!!,
+            artistTracks = vm.albumTracks, // We will rename/split this backend state next
+            isLoading = vm.isAlbumLoading.value,
+            onBack = { selectedArtist = null },
             onAddToPlaylist = { songToAddToPlaylist = it }
         )
     } else {
@@ -263,7 +278,9 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
                 val p = globalPlaylists.find { it.id == TargetPlaylistId }
                 if (p != null) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(accent.copy(alpha = 0.15f)).padding(horizontal = 16.dp, vertical = 8.dp),
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                            .background(accent.copy(alpha = 0.15f))
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -278,9 +295,9 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
                 }
             }
 
-            // ── SEARCH BAR ──
             Row(
-                modifier = Modifier.fillMaxWidth().clip(CircleShape).background(AntSurface2).padding(horizontal = 16.dp, vertical = 4.dp),
+                modifier = Modifier.fillMaxWidth().clip(CircleShape).background(AntSurface2)
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(ImageVector.vectorResource(R.drawable.ic_search), null, tint = AntText3, modifier = Modifier.size(18.dp))
@@ -291,9 +308,13 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
                     placeholder = { Text("Search songs, artists...", style = MaterialTheme.typography.labelLarge, color = AntText3) },
                     singleLine = true,
                     colors = TextFieldDefaults.colors(
-                        focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
-                        focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
-                        focusedTextColor = AntText, unfocusedTextColor = AntText, cursorColor = accent
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        focusedTextColor = AntText,
+                        unfocusedTextColor = AntText,
+                        cursorColor = accent
                     ),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = {
@@ -304,18 +325,32 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
                     textStyle = MaterialTheme.typography.bodyMedium
                 )
                 if (query.isNotEmpty()) {
-                    IconButton(onClick = {
-                        query = ""
-                        focusManager.clearFocus()
-                    }, modifier = Modifier.size(32.dp)) {
+                    IconButton(onClick = { query = ""; focusManager.clearFocus() }, modifier = Modifier.size(32.dp)) {
                         Icon(ImageVector.vectorResource(R.drawable.ic_close), "Clear", tint = AntText3, modifier = Modifier.size(16.dp))
                     }
                 }
             }
 
-            // 🟢 FILTERS ROW (Shows up when typing)
-            if (query.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                items(categories) { category ->
+                    val isSelected = selectedCategory == category
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(if (isSelected) accent else AntSurface1)
+                            .border(1.dp, if (isSelected) accent else AntGlassBorder, RoundedCornerShape(20.dp))
+                            .clickable { selectedCategory = category }
+                            .padding(horizontal = 20.dp, vertical = 8.dp)
+                    ) {
+                        Text(category, style = MaterialTheme.typography.labelMedium, color = if (isSelected) AntBlack else AntText2)
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (query.isNotEmpty() && selectedCategory == "Songs") {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     items(sourceFilters) { filter ->
                         val isSelected = selectedSourceFilter == filter
@@ -331,16 +366,18 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
                         }
                     }
                 }
+                Spacer(modifier = Modifier.height(12.dp))
             }
-            Spacer(modifier = Modifier.height(12.dp))
 
-            // ── STATE RENDERING ──
             if (query.isEmpty()) {
                 LazyColumn(contentPadding = PaddingValues(bottom = 160.dp)) {
-                    // Show History if available
                     if (searchHistory.isNotEmpty()) {
                         item {
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Text("RECENT SEARCHES", style = MaterialTheme.typography.labelLarge, color = AntText3)
                                 TextButton(onClick = { prefs.edit().putString("search_history", "").apply() }, contentPadding = PaddingValues(0.dp)) {
                                     Text("CLEAR", style = MaterialTheme.typography.labelMedium, color = accent)
@@ -348,7 +385,12 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
                             }
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 items(searchHistory) { hist ->
-                                    Box(modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(AntSurface1).clickable { query = hist; saveSearch(hist) }.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                                    Box(
+                                        modifier = Modifier.clip(RoundedCornerShape(16.dp))
+                                            .background(AntSurface1)
+                                            .clickable { query = hist; saveSearch(hist) }
+                                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                                    ) {
                                         Text(hist, style = MaterialTheme.typography.bodyMedium, color = AntText)
                                     }
                                 }
@@ -363,14 +405,20 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
                         }
                         itemsIndexed(items = trendingSongs.take(15)) { _, song ->
                             Row(
-                                modifier = Modifier.fillMaxWidth().clickable(indication = LocalIndication.current, interactionSource = remember { MutableInteractionSource() }) {
-                                    vm.playFreshTrack(context, song) // 🟢 Fetch fresh URL first!
+                                modifier = Modifier.fillMaxWidth().clickable(
+                                    indication = LocalIndication.current,
+                                    interactionSource = remember { MutableInteractionSource() }) {
+                                    vm.playFreshTrack(context, song)
                                     RequestFullScreenPlayer = true
                                 }
                                     .padding(vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Image(painter = rememberAsyncImagePainter(song.albumArt), contentDescription = null, modifier = Modifier.size(50.dp).clip(RoundedCornerShape(12.dp)))
+                                Image(
+                                    painter = rememberAsyncImagePainter(song.albumArt),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(50.dp).clip(RoundedCornerShape(12.dp))
+                                )
                                 Spacer(modifier = Modifier.width(14.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(song.title, style = MaterialTheme.typography.titleSmall, color = AntText, maxLines = 1)
@@ -398,68 +446,92 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
                     }
                 }
             } else {
-                // 🟢 NEW: Proper Loading and Empty States!
-                if (isLoading && filteredResults.isEmpty()) {
+                // 🟢 UNIVERSAL LOADING & EMPTY STATES
+                val isCurrentEmpty = when (selectedCategory) {
+                    "Songs" -> filteredResults.isEmpty()
+                    "Albums" -> albumResults.isEmpty()
+                    "Artists" -> artistResults.isEmpty()
+                    else -> true
+                }
+
+                if (isLoading && isCurrentEmpty) {
                     Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = accent, modifier = Modifier.size(40.dp))
                     }
-                } else if (!isLoading && filteredResults.isEmpty()) {
+                } else if (!isLoading && isCurrentEmpty) {
                     Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                        Text("No results found in ${selectedSourceFilter}", style = MaterialTheme.typography.labelLarge, color = AntText3)
+                        Text("No results found in $selectedCategory", style = MaterialTheme.typography.labelLarge, color = AntText3)
                     }
                 } else {
-                    Text("${filteredResults.size} RESULTS", style = MaterialTheme.typography.labelMedium, color = AntText3, modifier = Modifier.padding(vertical = 8.dp))
-
-                    LazyColumn(state = listState, contentPadding = PaddingValues(bottom = 160.dp)) {
-                        itemsIndexed(items = filteredResults, key = { index, song -> "${song.source}_${song.id}_$index" }) { _, song ->
-                            // 🟢 REPLACED WITH SWIPEABLE ROW
-                            SwipeableSongRow(
-                                song = song,
-                                context = context,
-                                accent = accent,
-                                onSongClick = {
-                                    PlayerManager.play(context, filteredResults, filteredResults.indexOf(song))
-                                    saveSearch(query)
-                                    focusManager.clearFocus()
-                                    RequestFullScreenPlayer = true
-                                },
-                                onAddToPlaylist = {
-                                    if (TargetPlaylistId != null) {
-                                        val p = globalPlaylists.find { it.id == TargetPlaylistId }
-                                        if (p != null) {
-                                            if (!p.tracks.any { it.id == song.id }) {
-                                                p.tracks.add(song)
-                                                Toast.makeText(context, "Added to ${p.name.value}", Toast.LENGTH_SHORT).show()
-                                            } else {
-                                                Toast.makeText(context, "Already in playlist", Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
-                                    } else {
-                                        songToAddToPlaylist = song
-                                    }
-                                }
-                            )
-
-                            HorizontalDivider(color = AntGlassBorder, thickness = 0.5.dp)
+                    when (selectedCategory) {
+                        "Albums" -> {
+                            Text("${albumResults.size} ALBUMS", style = MaterialTheme.typography.labelMedium, color = AntText3, modifier = Modifier.padding(vertical = 8.dp))
+                            AlbumGrid(albums = albumResults, onClick = {
+                                selectedAlbum = it
+                                vm.loadBrowseCategory(it.title) // 🟢 FIXED: Fetching by ID, no more duplicates!
+                            })
                         }
 
-                        // Bottom loading indicator for pagination
-                        if (isLoading) {
-                            item {
-                                Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                                    CircularProgressIndicator(color = accent, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+                        "Artists" -> {
+                            Text("${artistResults.size} ARTISTS", style = MaterialTheme.typography.labelMedium, color = AntText3, modifier = Modifier.padding(vertical = 8.dp))
+                            ArtistGrid(artists = artistResults, onClick = {
+                                selectedArtist = it
+                                vm.loadBrowseCategory(it.title) // 🟢 FIXED: Fetching by ID, no more duplicates!
+                            })
+                        }
+
+                        "Songs" -> {
+                            Text("${filteredResults.size} SONGS", style = MaterialTheme.typography.labelMedium, color = AntText3, modifier = Modifier.padding(vertical = 8.dp))
+
+                            LazyColumn(state = listState, contentPadding = PaddingValues(bottom = 160.dp)) {
+                                itemsIndexed(items = filteredResults, key = { index, song -> "${song.source}_${song.id}_$index" }) { _, song ->
+                                    SwipeableSongRow(
+                                        song = song,
+                                        context = context,
+                                        accent = accent,
+                                        onSongClick = {
+                                            PlayerManager.play(context, filteredResults, filteredResults.indexOf(song))
+                                            saveSearch(query)
+                                            focusManager.clearFocus()
+                                            RequestFullScreenPlayer = true
+                                        },
+                                        onAddToPlaylist = {
+                                            if (TargetPlaylistId != null) {
+                                                val p = globalPlaylists.find { it.id == TargetPlaylistId }
+                                                if (p != null) {
+                                                    if (!p.tracks.any { it.id == song.id }) {
+                                                        p.tracks.add(song)
+                                                        Toast.makeText(context, "Added to ${p.name.value}", Toast.LENGTH_SHORT).show()
+                                                    } else {
+                                                        Toast.makeText(context, "Already in playlist", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                            } else {
+                                                songToAddToPlaylist = song
+                                            }
+                                        }
+                                    )
+                                    HorizontalDivider(color = AntGlassBorder, thickness = 0.5.dp)
+                                }
+
+                                if (isLoading) {
+                                    item {
+                                        Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                                            CircularProgressIndicator(color = accent, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
+
         }
     }
 }
 
-// Kept untouched just in case it's used elsewhere (though hidden from UI now)
-
+// ── EXTRACTED COMPONENTS ──
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -473,25 +545,17 @@ fun SwipeableSongRow(
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
             when (value) {
-                // ✅ Swipe RIGHT → Like
                 SwipeToDismissBoxValue.StartToEnd -> {
                     if (!globalLikedSongs.any { it.id == song.id }) {
                         globalLikedSongs.add(song)
                         com.ant.tunes.player.AppDataManager.saveLikedSongs(context, globalLikedSongs)
                     }
-                    android.widget.Toast.makeText(
-                        context, "❤️ Added to Liked Songs",
-                        android.widget.Toast.LENGTH_SHORT
-                    ).show()
-                    false // don't dismiss — just trigger the action
+                    android.widget.Toast.makeText(context, "❤️ Added to Liked Songs", android.widget.Toast.LENGTH_SHORT).show()
+                    false
                 }
-                // ✅ Swipe LEFT → Play Next (Insert into Queue)
                 SwipeToDismissBoxValue.EndToStart -> {
-                    PlayerManager.insertNext(song, context) // 🟢 CHANGED HERE
-                    android.widget.Toast.makeText(
-                        context, "➕ Added to play next",
-                        android.widget.Toast.LENGTH_SHORT
-                    ).show()
+                    PlayerManager.insertNext(song, context)
+                    android.widget.Toast.makeText(context, "➕ Added to play next", android.widget.Toast.LENGTH_SHORT).show()
                     false
                 }
                 else -> false
@@ -504,9 +568,7 @@ fun SwipeableSongRow(
         backgroundContent = {
             val direction = dismissState.dismissDirection
             Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 16.dp),
+                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
                 horizontalArrangement = when (direction) {
                     SwipeToDismissBoxValue.StartToEnd -> Arrangement.Start
                     else -> Arrangement.End
@@ -515,26 +577,12 @@ fun SwipeableSongRow(
             ) {
                 when (direction) {
                     SwipeToDismissBoxValue.StartToEnd -> {
-                        // Like indicator
-                        Box(
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFFEC4899).copy(alpha = 0.2f)),
-                            contentAlignment = Alignment.Center
-                        ) {
+                        Box(modifier = Modifier.size(44.dp).clip(CircleShape).background(Color(0xFFEC4899).copy(alpha = 0.2f)), contentAlignment = Alignment.Center) {
                             Icon(Icons.Default.Favorite, null, tint = Color(0xFFEC4899), modifier = Modifier.size(22.dp))
                         }
                     }
                     SwipeToDismissBoxValue.EndToStart -> {
-                        // Queue indicator
-                        Box(
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(CircleShape)
-                                .background(accent.copy(alpha = 0.2f)),
-                            contentAlignment = Alignment.Center
-                        ) {
+                        Box(modifier = Modifier.size(44.dp).clip(CircleShape).background(accent.copy(alpha = 0.2f)), contentAlignment = Alignment.Center) {
                             Icon(Icons.Default.QueueMusic, null, tint = accent, modifier = Modifier.size(22.dp))
                         }
                     }
@@ -543,17 +591,16 @@ fun SwipeableSongRow(
             }
         }
     ) {
-        // 🟢 THE EXISTING SONG ROW DESIGN
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(AntBlack) // ✅ MUST have a solid background so the swipe colors hide behind it
+                .background(AntBlack)
                 .clickable(indication = androidx.compose.foundation.LocalIndication.current, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) {
                     onSongClick()
                 }.padding(vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            coil.compose.AsyncImage(model = song.albumArt, contentDescription = null, modifier = Modifier.size(50.dp).clip(RoundedCornerShape(12.dp)))
+            AsyncImage(model = song.albumArt, contentDescription = null, modifier = Modifier.size(50.dp).clip(RoundedCornerShape(12.dp)))
             Spacer(modifier = Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(song.title, style = MaterialTheme.typography.titleSmall, color = AntText, maxLines = 1)
@@ -574,73 +621,61 @@ fun SwipeableSongRow(
 }
 
 @Composable
-fun AlbumDetailView(
-    album: BrowseCard,
-    albumTracks: List<Song>,
-    isLoading: Boolean,
-    onBack: () -> Unit,
-    onAddToPlaylist: (Song) -> Unit
-) {
-    val context = LocalContext.current
-    val accent = LocalAccentColor.current
-
-    Column(modifier = Modifier.fillMaxSize().background(AntBlack)) {
-        Box(modifier = Modifier.fillMaxWidth().aspectRatio(1f)) {
-            AsyncImage(model = album.imageUrl, contentDescription = album.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-            Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(colors = listOf(Color.Transparent, AntBlack), startY = 300f)))
-            IconButton(onClick = onBack, modifier = Modifier.padding(16.dp).statusBarsPadding().size(40.dp).background(AntSurface2, CircleShape).border(1.dp, AntGlassBorder, CircleShape).align(Alignment.TopStart)) {
-                Icon(Icons.Default.ArrowBack, "Go Back", tint = AntText, modifier = Modifier.size(20.dp))
-            }
-            Text(album.title, style = MaterialTheme.typography.displayMedium, color = AntText, modifier = Modifier.align(Alignment.BottomStart).padding(horizontal = 20.dp, vertical = 16.dp))
+fun AlbumGrid(albums: List<BrowseCard>, onClick: (BrowseCard) -> Unit) {
+    if (albums.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("No albums found.", color = AntText3)
         }
-
-        Column(modifier = Modifier.padding(horizontal = 20.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = { if (albumTracks.isNotEmpty()) PlayerManager.play(context, albumTracks, 0) }, modifier = Modifier.weight(1f).height(48.dp), shape = RoundedCornerShape(24.dp), colors = ButtonDefaults.buttonColors(containerColor = accent)) {
-                    Text("PLAY", style = MaterialTheme.typography.labelLarge, color = AntBlack)
-                }
-                OutlinedButton(onClick = { if (albumTracks.isNotEmpty()) { PlayerManager.play(context, albumTracks.shuffled(), 0) } }, modifier = Modifier.weight(1f).height(48.dp), shape = RoundedCornerShape(24.dp), border = BorderStroke(1.dp, AntGlassBorder)) {
-                    Text("SHUFFLE", style = MaterialTheme.typography.labelLarge, color = AntText)
-                }
+        return
+    }
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
+        contentPadding = PaddingValues(bottom = 160.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        items(albums) { album ->
+            Column(modifier = Modifier.clickable { onClick(album) }) {
+                AsyncImage(
+                    model = album.imageUrl,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(12.dp)),
+                    contentScale = ContentScale.Crop
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(album.title, color = AntText, maxLines = 1, style = MaterialTheme.typography.titleSmall)
             }
+        }
+    }
+}
 
-            Spacer(modifier = Modifier.height(24.dp))
-            Text("TRACKS", style = MaterialTheme.typography.labelMedium, color = AntText3)
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (isLoading) {
-                Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = accent, modifier = Modifier.size(32.dp))
-                }
-            } else {
-                LazyColumn(contentPadding = PaddingValues(bottom = 160.dp)) {
-                    itemsIndexed(albumTracks) { index, song ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth().clickable { PlayerManager.play(context, albumTracks, index) }.padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("${index + 1}", style = MaterialTheme.typography.labelMedium, color = AntText3, modifier = Modifier.width(30.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(song.title, style = MaterialTheme.typography.titleSmall, color = AntText, maxLines = 1)
-                                Text(song.artist, style = MaterialTheme.typography.labelSmall, color = AntText2, maxLines = 1)
-                            }
-                            IconButton(onClick = {
-                                if (TargetPlaylistId != null) {
-                                    val p = globalPlaylists.find { it.id == TargetPlaylistId }
-                                    if (p != null) {
-                                        if (!p.tracks.any { it.id == song.id }) {
-                                            p.tracks.add(song)
-                                            Toast.makeText(context, "Added to ${p.name.value}", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                } else {
-                                    onAddToPlaylist(song)
-                                }
-                            }) { Icon(Icons.Default.Add, "Add to Playlist", tint = accent) }
-                        }
-                        HorizontalDivider(color = AntGlassBorder, thickness = 0.5.dp)
-                    }
-                }
+@Composable
+fun ArtistGrid(artists: List<BrowseCard>, onClick: (BrowseCard) -> Unit) {
+    if (artists.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("No artists found.", color = AntText3)
+        }
+        return
+    }
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(3),
+        contentPadding = PaddingValues(bottom = 160.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp)
+    ) {
+        items(artists) { artist ->
+            Column(
+                modifier = Modifier.clickable { onClick(artist) },
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                AsyncImage(
+                    model = artist.imageUrl,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(CircleShape).border(1.dp, AntGlassBorder, CircleShape),
+                    contentScale = ContentScale.Crop
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(artist.title, color = AntText, maxLines = 1, style = MaterialTheme.typography.labelMedium, textAlign = TextAlign.Center)
             }
         }
     }

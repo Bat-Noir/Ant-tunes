@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 package com.ant.tunes.ui
 
 import androidx.compose.foundation.Image
@@ -27,22 +29,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import coil.compose.rememberAsyncImagePainter
 import com.ant.tunes.data.Song
 import com.ant.tunes.player.PlayerManager
 import com.ant.tunes.ui.theme.*
 import java.util.UUID
 import kotlinx.coroutines.launch
-
-// 🟢 Explicit imports to fix all "Unresolved Reference" and "getValue/setValue" errors
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.collectAsState
 
 // ═══════════════════════════════════════
 // 🟢 GLOBAL STATES & DATA STRUCTURES
@@ -53,25 +50,29 @@ class PlaylistData(val id: String, var name: MutableState<String>) {
 
 val globalPlaylists = mutableStateListOf<PlaylistData>()
 val globalLikedSongs = mutableStateListOf<Song>()
+// 🟢 NEW: Global States for Albums and Artists!
+val globalSavedAlbums = mutableStateListOf<BrowseCard>()
+val globalFollowedArtists = mutableStateListOf<BrowseCard>()
 
-// ✅ Call this once from MainActivity to restore data
 fun initGlobalData(context: android.content.Context) {
     if (globalPlaylists.isEmpty()) {
-        globalPlaylists.addAll(
-            com.ant.tunes.player.AppDataManager.loadPlaylists(context)
-        )
+        globalPlaylists.addAll(com.ant.tunes.player.AppDataManager.loadPlaylists(context))
     }
     if (globalLikedSongs.isEmpty()) {
-        globalLikedSongs.addAll(
-            com.ant.tunes.player.AppDataManager.loadLikedSongs(context)
-        )
+        globalLikedSongs.addAll(com.ant.tunes.player.AppDataManager.loadLikedSongs(context))
+    }
+    // 🟢 NEW: Load Albums and Artists on Boot
+    if (globalSavedAlbums.isEmpty()) {
+        globalSavedAlbums.addAll(com.ant.tunes.player.AppDataManager.loadSavedAlbums(context))
+    }
+    if (globalFollowedArtists.isEmpty()) {
+        globalFollowedArtists.addAll(com.ant.tunes.player.AppDataManager.loadFollowedArtists(context))
     }
 }
 var TargetPlaylistId by mutableStateOf<String?>(null)
 var RequestTabSwitch by mutableStateOf<NavTab?>(null)
 var RequestFullScreenPlayer by mutableStateOf(false)
 
-// 🟢 NEW: Global state to tell MainActivity when a Library sub-screen is open
 var IsLibrarySubScreenActive by mutableStateOf(false)
 
 // ═══════════════════════════════════════
@@ -82,24 +83,101 @@ fun LibraryScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel) {
     var activeRoute by remember { mutableStateOf("Main") }
     var selectedPlaylistId by remember { mutableStateOf("") }
 
-    // 🟢 Update the global state so MainActivity knows to hide the Bottom Nav
-    IsLibrarySubScreenActive = activeRoute != "Main"
+    // 🟢 NEW: Native Routing states for Albums and Artists
+    var selectedAlbum by remember { mutableStateOf<BrowseCard?>(null) }
+    var selectedArtist by remember { mutableStateOf<BrowseCard?>(null) }
+    var songToAddToPlaylist by remember { mutableStateOf<Song?>(null) }
+    val context = LocalContext.current
+    val accent = LocalAccentColor.current
 
-    // 🟢 ADDED: Intercept Android hardware back button
-    androidx.activity.compose.BackHandler(enabled = activeRoute != "Main") {
-        activeRoute = "Main"
+    IsLibrarySubScreenActive = activeRoute != "Main" || selectedAlbum != null || selectedArtist != null
+
+    androidx.activity.compose.BackHandler(enabled = IsLibrarySubScreenActive) {
+        if (selectedAlbum != null) selectedAlbum = null
+        else if (selectedArtist != null) selectedArtist = null
+        else activeRoute = "Main"
     }
 
-    when (activeRoute) {
-        "Main" -> LibraryMain(
-            onNavigate = { route, id ->
-                if (route == "PlaylistDetail") selectedPlaylistId = id ?: ""
-                activeRoute = route
+    // 🟢 Bottom Sheet for adding to playlist from Album/Artist views
+    if (songToAddToPlaylist != null) {
+        ModalBottomSheet(
+            onDismissRequest = { songToAddToPlaylist = null },
+            containerColor = Color(0xFF121212),
+            dragHandle = { BottomSheetDefaults.DragHandle(color = AntText3) }
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                Text("Add to Playlist", style = MaterialTheme.typography.titleLarge, color = AntText)
+                Spacer(Modifier.height(16.dp))
+                if (globalPlaylists.isEmpty()) {
+                    Text("No playlists yet.", color = AntText3)
+                } else {
+                    LazyColumn(contentPadding = PaddingValues(bottom = 40.dp)) {
+                        items(globalPlaylists) { playlist ->
+                            val isAdded = playlist.tracks.any { it.id == songToAddToPlaylist?.id }
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clickable(enabled = !isAdded) {
+                                    playlist.tracks.add(songToAddToPlaylist!!)
+                                    com.ant.tunes.player.AppDataManager.savePlaylists(context, globalPlaylists)
+                                    android.widget.Toast.makeText(context, "Added to ${playlist.name.value}", android.widget.Toast.LENGTH_SHORT).show()
+                                    songToAddToPlaylist = null
+                                }.padding(vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.QueueMusic, null, tint = if (isAdded) AntText3 else accent)
+                                Spacer(Modifier.width(12.dp))
+                                Text(playlist.name.value, color = if (isAdded) AntText3 else AntText, modifier = Modifier.weight(1f))
+                                if (isAdded) Icon(Icons.Default.Check, null, tint = AntText3)
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(32.dp))
             }
+        }
+    }
+
+    // 🟢 Handle Screens!
+    if (selectedAlbum != null) {
+        // 🟢 Wait for the ViewModel to finish clearing the old list and fetching the new one
+        AlbumScreen(
+            album = selectedAlbum!!,
+            albumTracks = vm.albumTracks, // This automatically updates when the ViewModel finishes!
+            isLoading = vm.isAlbumLoading.value,
+            onBack = {
+                selectedAlbum = null
+                // Don't clear the tracks here, let the ViewModel handle it on the next click!
+            },
+            onAddToPlaylist = { songToAddToPlaylist = it }
         )
-        "Liked" -> LikedSongsScreen(onBack = { activeRoute = "Main" })
-        "Downloads" -> OfflineScreen(onBack = { activeRoute = "Main" })
-        "PlaylistDetail" -> PlaylistDetailScreen(playlistId = selectedPlaylistId, onBack = { activeRoute = "Main" })
+    } else if (selectedArtist != null) {
+        ArtistScreen(
+            artist = selectedArtist!!,
+            artistTracks = vm.albumTracks,
+            isLoading = vm.isAlbumLoading.value,
+            onBack = { selectedArtist = null },
+            onAddToPlaylist = { songToAddToPlaylist = it }
+        )
+    } else {
+
+        when (activeRoute) {
+            "Main" -> LibraryMain(
+                onNavigate = { route, id ->
+                    if (route == "PlaylistDetail") selectedPlaylistId = id ?: ""
+                    activeRoute = route
+                },
+                onOpenAlbum = {
+                    selectedAlbum = it
+                    vm.loadAlbumById(it.id)
+                },
+                onOpenArtist = {
+                    selectedArtist = it
+                    vm.loadArtistById(it.id)
+                }
+            )
+            "Liked" -> LikedSongsScreen(onBack = { activeRoute = "Main" })
+            "Downloads" -> OfflineScreen(onBack = { activeRoute = "Main" })
+            "PlaylistDetail" -> PlaylistDetailScreen(playlistId = selectedPlaylistId, onBack = { activeRoute = "Main" })
+        }
     }
 }
 
@@ -108,21 +186,18 @@ fun LibraryScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel) {
 // 📚 LIBRARY MAIN UI
 // ═══════════════════════════════════════
 @Composable
-fun LibraryMain(onNavigate: (String, String?) -> Unit) {
+fun LibraryMain(onNavigate: (String, String?) -> Unit, onOpenAlbum: (BrowseCard) -> Unit, onOpenArtist: (BrowseCard) -> Unit) {
     val songs by PlayerManager.downloadedSongs.collectAsState()
     val context = LocalContext.current
     val accent = LocalAccentColor.current
 
     var selectedChip by remember { mutableStateOf("All") }
-    val chips = listOf("All", "Playlists", "Downloads")
+    val chips = listOf("All", "Playlists", "Albums", "Artists", "Downloads")
 
     var showCreateDialog by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf<PlaylistData?>(null) }
     var playlistInputName by remember { mutableStateOf("") }
-
-    // 🟢 ADDED: State for the Import Sheet
     var showImportSheet by remember { mutableStateOf(false) }
-
 
     // ── DIALOGS ──
     if (showCreateDialog) {
@@ -135,19 +210,14 @@ fun LibraryMain(onNavigate: (String, String?) -> Unit) {
                     onValueChange = { playlistInputName = it },
                     singleLine = true,
                     placeholder = { Text("Playlist name...", color = AntText3) },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = accent, unfocusedBorderColor = AntGlassBorder,
-                        focusedTextColor = AntText, unfocusedTextColor = AntText,
-                        cursorColor = accent,
-                        focusedContainerColor = AntSurface1, unfocusedContainerColor = AntSurface1
-                    ),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = accent, unfocusedBorderColor = AntGlassBorder, focusedTextColor = AntText, unfocusedTextColor = AntText, cursorColor = accent, focusedContainerColor = AntSurface1, unfocusedContainerColor = AntSurface1),
                     shape = RoundedCornerShape(12.dp)
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
                     if (playlistInputName.isNotBlank()) {
-                        globalPlaylists.add(PlaylistData(UUID.randomUUID().toString(), mutableStateOf(playlistInputName)))
+                        globalPlaylists.add(PlaylistData(java.util.UUID.randomUUID().toString(), mutableStateOf(playlistInputName)))
                         com.ant.tunes.player.AppDataManager.savePlaylists(context, globalPlaylists)
                     }
                     playlistInputName = ""
@@ -168,12 +238,7 @@ fun LibraryMain(onNavigate: (String, String?) -> Unit) {
                     value = playlistInputName,
                     onValueChange = { playlistInputName = it },
                     singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = accent, unfocusedBorderColor = AntGlassBorder,
-                        focusedTextColor = AntText, unfocusedTextColor = AntText,
-                        cursorColor = accent,
-                        focusedContainerColor = AntSurface1, unfocusedContainerColor = AntSurface1
-                    ),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = accent, unfocusedBorderColor = AntGlassBorder, focusedTextColor = AntText, unfocusedTextColor = AntText, cursorColor = accent, focusedContainerColor = AntSurface1, unfocusedContainerColor = AntSurface1),
                     shape = RoundedCornerShape(12.dp)
                 )
             },
@@ -192,17 +257,14 @@ fun LibraryMain(onNavigate: (String, String?) -> Unit) {
         )
     }
 
-    // 🟢 ADDED: Render the Import Sheet when triggered
     if (showImportSheet) {
-        ImportPlaylistSheet(
-            onDismiss = { showImportSheet = false },
-            context = context
-        )
+        ImportPlaylistSheet(onDismiss = { showImportSheet = false }, context = context)
     }
-
 
     // ── MAIN CONTENT ──
     LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp), contentPadding = PaddingValues(bottom = 160.dp)) {
+
+        // 🟢 HEADER SECTION
         item {
             Spacer(modifier = Modifier.height(56.dp))
             Text("YOUR LIBRARY", style = MaterialTheme.typography.displayMedium, color = AntText, modifier = Modifier.padding(bottom = 16.dp))
@@ -210,14 +272,14 @@ fun LibraryMain(onNavigate: (String, String?) -> Unit) {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 items(chips) { chip ->
                     val isSelected = selectedChip == chip
-                    Box(
-                        modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(if (isSelected) accent.copy(alpha = 0.15f) else AntSurface1).border(1.dp, if (isSelected) accent.copy(alpha = 0.5f) else AntGlassBorder, RoundedCornerShape(20.dp)).clickable { selectedChip = chip }.padding(horizontal = 16.dp, vertical = 8.dp)
+                    Box(modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(if (isSelected) accent.copy(alpha = 0.15f) else AntSurface1).border(1.dp, if (isSelected) accent.copy(alpha = 0.5f) else AntGlassBorder, RoundedCornerShape(20.dp)).clickable { selectedChip = chip }.padding(horizontal = 16.dp, vertical = 8.dp)
                     ) { Text(chip, style = MaterialTheme.typography.labelMedium, color = if (isSelected) accent else AntText2) }
                 }
             }
             Spacer(modifier = Modifier.height(24.dp))
         }
 
+        // 🟢 OFFLINE / LIKED SECTION
         if (selectedChip == "All") {
             item {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -228,19 +290,77 @@ fun LibraryMain(onNavigate: (String, String?) -> Unit) {
             }
         }
 
+        // 🟢 ALBUMS SECTION
+        if (selectedChip == "All" || selectedChip == "Albums") {
+            item {
+                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("SAVED ALBUMS", style = MaterialTheme.typography.labelLarge, color = AntText3)
+                    if (selectedChip == "Albums") Text("${globalSavedAlbums.size} ALBUMS", style = MaterialTheme.typography.labelSmall, color = accent)
+                }
+            }
+
+            if (globalSavedAlbums.isEmpty()) {
+                item { Box(modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp), contentAlignment = Alignment.Center) { Text("No saved albums yet.", style = MaterialTheme.typography.labelLarge, color = AntText3) } }
+            } else {
+                val displayAlbums = if (selectedChip == "All") globalSavedAlbums.take(3) else globalSavedAlbums
+                items(items = displayAlbums, key = { "album_${it.id}" }) { album ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable { onOpenAlbum(album) }.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        coil.compose.AsyncImage(model = album.imageUrl, contentDescription = null, modifier = Modifier.size(52.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
+                        Spacer(Modifier.width(14.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(album.title, style = MaterialTheme.typography.titleSmall, color = AntText, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("Album", style = MaterialTheme.typography.bodySmall, color = AntText2)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
+            item { Spacer(modifier = Modifier.height(24.dp)) }
+        }
+
+        // 🟢 ARTISTS SECTION
+        if (selectedChip == "All" || selectedChip == "Artists") {
+            item {
+                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("FOLLOWED ARTISTS", style = MaterialTheme.typography.labelLarge, color = AntText3)
+                    if (selectedChip == "Artists") Text("${globalFollowedArtists.size} ARTISTS", style = MaterialTheme.typography.labelSmall, color = accent)
+                }
+            }
+
+            if (globalFollowedArtists.isEmpty()) {
+                item { Box(modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp), contentAlignment = Alignment.Center) { Text("No followed artists yet.", style = MaterialTheme.typography.labelLarge, color = AntText3) } }
+            } else {
+                val displayArtists = if (selectedChip == "All") globalFollowedArtists.take(3) else globalFollowedArtists
+                items(items = displayArtists, key = { "artist_${it.id}" }) { artist ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable { onOpenArtist(artist) }.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        coil.compose.AsyncImage(model = artist.imageUrl, contentDescription = null, modifier = Modifier.size(52.dp).clip(CircleShape), contentScale = ContentScale.Crop)
+                        Spacer(Modifier.width(14.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(artist.title, style = MaterialTheme.typography.titleSmall, color = AntText, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("Artist", style = MaterialTheme.typography.bodySmall, color = AntText2)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
+            item { Spacer(modifier = Modifier.height(0.dp)) }
+        }
+
+        // 🟢 PLAYLISTS SECTION
         if (selectedChip == "All" || selectedChip == "Playlists") {
             item {
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("YOUR PLAYLISTS", style = MaterialTheme.typography.labelLarge, color = AntText3)
-
-                    // 🟢 ADDED: The Import Button
-                    TextButton(onClick = { showImportSheet = true }) {
-                        Text("IMPORT", style = MaterialTheme.typography.labelSmall, color = accent)
-                    }
+                    TextButton(onClick = { showImportSheet = true }) { Text("IMPORT", style = MaterialTheme.typography.labelSmall, color = accent) }
                 }
 
                 Row(
-
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(AntSurface1).clickable { playlistInputName = ""; showCreateDialog = true }.padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -267,23 +387,17 @@ fun LibraryMain(onNavigate: (String, String?) -> Unit) {
                     Box {
                         IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.MoreVert, null, tint = AntText2) }
                         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }, modifier = Modifier.background(Color(0xFF1E1E1E))) {
-                            DropdownMenuItem(text = { Text("Rename", color = Color.White) }, onClick = {
-                                showMenu = false
-                                playlistInputName = playlist.name.value
-                                showRenameDialog = playlist
-                            })
-                            DropdownMenuItem(text = { Text("Delete", color = Color(0xFFFF4444)) }, onClick = {
-                                showMenu = false
-                                globalPlaylists.remove(playlist)
-                                com.ant.tunes.player.AppDataManager.savePlaylists(context, globalPlaylists)
-                            })
+                            DropdownMenuItem(text = { Text("Rename", color = Color.White) }, onClick = { showMenu = false; playlistInputName = playlist.name.value; showRenameDialog = playlist })
+                            DropdownMenuItem(text = { Text("Delete", color = Color(0xFFFF4444)) }, onClick = { showMenu = false; globalPlaylists.remove(playlist); com.ant.tunes.player.AppDataManager.savePlaylists(context, globalPlaylists) })
                         }
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
             }
+            item { Spacer(modifier = Modifier.height(24.dp)) }
         }
 
+        // 🟢 DOWNLOADS SECTION
         if (selectedChip == "Downloads") {
             item {
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -311,7 +425,7 @@ fun LibraryMain(onNavigate: (String, String?) -> Unit) {
                         }.padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Image(painter = rememberAsyncImagePainter(song.albumArt), contentDescription = null, modifier = Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)))
+                        Image(painter = coil.compose.rememberAsyncImagePainter(song.albumArt), contentDescription = null, modifier = Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)))
                         Spacer(modifier = Modifier.width(14.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(song.title, style = MaterialTheme.typography.titleSmall, color = AntText, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -325,6 +439,7 @@ fun LibraryMain(onNavigate: (String, String?) -> Unit) {
         }
     }
 }
+//... (Keep the rest of your ImportPlaylistSheet and LibraryCard functions below here exactly as they are) ...
 
 // New composable
 @OptIn(ExperimentalMaterial3Api::class)

@@ -44,3 +44,56 @@ data class Album(
     val name: String?,
     val url: String?
 )
+
+// ═══════════════════════════════════════
+// 🟢 ALBUM & ARTIST SEARCH MODELS
+// ═══════════════════════════════════════
+
+data class AlbumSearchResponse(
+    val success: Boolean,
+    val data: AlbumSearchData
+)
+
+data class AlbumSearchData(
+    val results: List<AlbumDto>
+)
+
+data class AlbumDto(
+    val id: String,
+    val name: String,
+    val description: String?,
+    val year: String?,
+    val image: List<Image> // Reuses your existing Image class!
+)
+
+data class ArtistSearchResponse(
+    val success: Boolean,
+    val data: ArtistSearchData
+)
+
+data class ArtistSearchData(
+    val results: List<ArtistDto>
+)
+
+data class ArtistDto(
+    val id: String,
+    val name: String,
+    val role: String?,
+    val image: List<Image> // Reuses your existing Image class!
+)
+
+// ═══════════════════════════════════════
+// 🟢 ALBUM & ARTIST DETAILS MODELS (THE MISSING PIECE!)
+// ═══════════════════════════════════════
+
+data class DetailsResponse(
+    val success: Boolean,
+    val data: DetailsData?
+)
+
+data class DetailsData(
+    val id: String?,
+    val name: String?,
+    val songs: List<SongDto>?,      // Albums put their tracks here!
+    val topSongs: List<SongDto>?    // Artists put their tracks here!
+)
