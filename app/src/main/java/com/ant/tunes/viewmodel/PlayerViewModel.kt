@@ -12,6 +12,7 @@ import com.ant.tunes.lastfm.LastFmAuthManager
 import com.ant.tunes.lastfm.LastFmRepository
 import com.ant.tunes.network.RetrofitClient
 import com.ant.tunes.player.PlayerManager
+import com.ant.tunes.ui.globalFollowedArtists
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -21,7 +22,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-data class LrcLine(val timeMs: Long, val text: String)
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
 
     private val appContext = application.applicationContext
@@ -30,7 +30,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var searchPage = 1
     private var searchHasMore = true
     private var recPage = 1
-    private var recHasMore = true
+
     // 🟢 Upgraded to a StateFlow so HomeScreen can track the loading spinner
     val isLoadingRecommendations = MutableStateFlow(false)
     private val _isSearching = mutableStateOf(false)
@@ -69,14 +69,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun fetchSuggestedAlbums(artist: String) {
         viewModelScope.launch {
-            val albums = LastFmRepository.getTopAlbums(artist)
+            // 🟢 FIX: Split by comma and take the first artist so Last.fm doesn't crash!
+            val cleanArtist = artist.split(",").firstOrNull()?.trim() ?: artist
+            val albums = LastFmRepository.getTopAlbums(cleanArtist)
             recommendedAlbums.value = albums
         }
     }
 
     // 🟢 THE ANTI-JUNK BOUNCER
     private fun isJunk(title: String, seedSong: Song): Boolean {
-        val junkRegex = Regex("(?i)(slowed|reverb|8d|cover|karaoke|instrumental|mashup|remix\\b(?!official)|bass\\s*boosted|ringtone|shorts)")
+        val junkRegex =
+            Regex("(?i)(slowed|reverb|8d|cover|karaoke|instrumental|mashup|remix\\b(?!official)|bass\\s*boosted|ringtone|shorts)")
         if (junkRegex.containsMatchIn(title)) return true
 
         val liveRegex = Regex("(?i)(live|concert|performance)")
@@ -93,8 +96,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     val dynamicArtistTracks = mutableStateListOf<Song>()
 
     fun generateDynamicArtistRow(followedArtists: List<com.ant.tunes.ui.BrowseCard>) {
-        // If they don't follow anyone yet, or we already generated a row, skip it.
-        if (followedArtists.isEmpty() || dynamicArtistName.value != null) return
+        // 🟢 CHANGED: Removed "|| dynamicArtistName.value != null"
+        if (followedArtists.isEmpty()) return
 
         viewModelScope.launch {
             try {
@@ -103,7 +106,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 dynamicArtistName.value = randomArtist.title
 
                 // 2. Fetch tracks based on that artist
-                val response = RetrofitClient.api.searchSongs(query = randomArtist.title, page = 1, limit = 15)
+                val response =
+                    RetrofitClient.api.searchSongs(query = randomArtist.title, page = 1, limit = 15)
                 if (response.isSuccessful) {
                     val apiSongs = response.body()?.data?.results ?: emptyList()
                     val newSongs = apiSongs.mapNotNull {
@@ -122,7 +126,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     // Shuffle the results so it feels fresh every time!
                     dynamicArtistTracks.addAll(newSongs.shuffled().take(10))
                 }
-            } catch (e: Exception) { e.printStackTrace() }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
@@ -181,7 +187,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         return@launch
                     }
                 }
-            } catch (e: Exception) { e.printStackTrace() }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
 
             // Fallback to lyrics.ovh
             try {
@@ -207,63 +215,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         return@launch
                     }
                 }
-            } catch (e: Exception) { e.printStackTrace() }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
 
             withContext(Dispatchers.Main) {
                 currentLyrics.value = null
                 isLyricsLoading.value = false
             }
         }
-    }
-
-    private suspend fun tryLrcLib(title: String, artist: String): String? {
-        return try {
-            // ✅ Use search endpoint for better accuracy
-            val searchUrl = "https://lrclib.net/api/search?track_name=${
-                java.net.URLEncoder.encode(title, "UTF-8")
-            }&artist_name=${
-                java.net.URLEncoder.encode(artist, "UTF-8")
-            }"
-            val conn = java.net.URL(searchUrl).openConnection() as java.net.HttpURLConnection
-            conn.setRequestProperty("User-Agent", "AntTunes/1.0")
-            conn.connectTimeout = 5000
-            conn.readTimeout = 5000
-
-            if (conn.responseCode == 200) {
-                val resp = conn.inputStream.bufferedReader().readText()
-                val arr = org.json.JSONArray(resp)
-                if (arr.length() == 0) return null
-
-                // ✅ Find best match by title AND artist similarity
-                var bestMatch: org.json.JSONObject? = null
-                var bestScore = 0.0
-
-                for (i in 0 until arr.length()) {
-                    val item = arr.getJSONObject(i)
-                    val itemTitle = item.optString("trackName", "").lowercase()
-                    val itemArtist = item.optString("artistName", "").lowercase()
-
-                    val titleScore = similarity(itemTitle, title.lowercase())
-                    val artistScore = similarity(itemArtist, artist.lowercase())
-                    val score = titleScore * 0.6 + artistScore * 0.4
-
-                    if (score > bestScore) {
-                        bestScore = score
-                        bestMatch = item
-                    }
-                }
-
-                // ✅ Only use if confident (score > 0.7)
-                if (bestScore > 0.7 && bestMatch != null) {
-                    val lyrics = bestMatch.optString("plainLyrics", "").ifBlank { null }
-                    android.util.Log.d("Lyrics", "Match score: $bestScore for $title")
-                    lyrics
-                } else {
-                    android.util.Log.d("Lyrics", "No confident match (score=$bestScore) for $title by $artist")
-                    null
-                }
-            } else null
-        } catch (e: Exception) { null }
     }
 
     // ── MATH HELPERS FOR LYRICS MATCHING ──
@@ -284,8 +244,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         for (i in 0..a.length) dp[i][0] = i
         for (j in 0..b.length) dp[0][j] = j
         for (i in 1..a.length) for (j in 1..b.length) {
-            dp[i][j] = if (a[i-1] == b[j-1]) dp[i-1][j-1]
-            else 1 + minOf(dp[i-1][j], dp[i][j-1], dp[i-1][j-1])
+            dp[i][j] = if (a[i - 1] == b[j - 1]) dp[i - 1][j - 1]
+            else 1 + minOf(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
         }
         return dp[a.length][b.length]
     }
@@ -306,7 +266,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 )
                 json.optString("lyrics", "").ifEmpty { null }
             } else null
-        } catch (e: Exception) { null }
+        } catch (e: Exception) {
+            null
+        }
     }
 
 
@@ -315,8 +277,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             try {
                 // Instantly search the exact song to get a fresh, unexpired CDN link
-                val response = RetrofitClient.api.searchSongs(query = "${song.title} ${song.artist}", page = 1, limit = 1)
-                val freshUrl = response.body()?.data?.results?.firstOrNull()?.downloadUrl?.lastOrNull()?.url
+                val response = RetrofitClient.api.searchSongs(
+                    query = "${song.title} ${song.artist}",
+                    page = 1,
+                    limit = 1
+                )
+                val freshUrl =
+                    response.body()?.data?.results?.firstOrNull()?.downloadUrl?.lastOrNull()?.url
 
                 if (freshUrl != null) {
                     val freshSong = song.copy(streamUrl = freshUrl, source = "saavn")
@@ -412,7 +379,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun fetchSaavnPage(query: String) {
         if (!searchHasMore) return
         try {
-            val response = RetrofitClient.api.searchSongs(query = query, page = searchPage, limit = 10)
+            val response =
+                RetrofitClient.api.searchSongs(query = query, page = searchPage, limit = 10)
             if (response.isSuccessful) {
                 val apiSongs = response.body()?.data?.results ?: emptyList()
                 val newSongs = apiSongs.mapNotNull {
@@ -431,12 +399,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 _results.addAll(newSongs)
                 if (newSongs.isEmpty()) searchHasMore = false else searchPage++
             }
-        } catch (e: Exception) { e.printStackTrace() }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private suspend fun fetchGaana(query: String) {
         try {
-            val response = RetrofitClient.gaanaApi.searchSongs(query = query, type = "song", limit = 20)
+            val response =
+                RetrofitClient.gaanaApi.searchSongs(query = query, type = "song", limit = 20)
             if (response.isSuccessful) {
                 val songs = response.body()?.results ?: emptyList()
                 val mappedSongs = kotlinx.coroutines.coroutineScope {
@@ -448,11 +419,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
                                 // 🟢 GSON LANDMINE REMOVED! We no longer check body?.status == false
 
-                                val streamDetail = RetrofitClient.gaanaApi.getStreamUrl(gaanaSong.seokey)
+                                val streamDetail =
+                                    RetrofitClient.gaanaApi.getStreamUrl(gaanaSong.seokey)
                                 val streamBody = streamDetail.body()
 
                                 // 🟢 Check the dedicated stream API first, fallback to metadata link
-                                val audioUrl = streamBody?.audio_url ?: body?.audio_url ?: return@async null
+                                val audioUrl =
+                                    streamBody?.audio_url ?: body?.audio_url ?: return@async null
 
                                 Song(
                                     id = gaanaSong.id,
@@ -464,14 +437,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                     permanentUrl = gaanaSong.seokey,
                                     source = "gaana"
                                 )
-                            } catch (e: Exception) { null }
+                            } catch (e: Exception) {
+                                null
+                            }
                         }
                     }.awaitAll().filterNotNull()
                     // 🟢 AGGRESSIVE FILTER REMOVED! Let the API's search algorithm do the work.
                 }
                 _gaanaResults.addAll(mappedSongs)
             }
-        } catch (e: Exception) { e.printStackTrace() }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private suspend fun fetchYouTube(query: String) {
@@ -481,14 +458,19 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 results.map { song ->
                     async {
                         try {
-                            val audioUrl = NewPipeHelper.getAudioUrl(song.streamUrl) ?: return@async null
+                            val audioUrl =
+                                NewPipeHelper.getAudioUrl(song.streamUrl) ?: return@async null
                             song.copy(streamUrl = audioUrl, source = "youtube")
-                        } catch (e: Exception) { null }
+                        } catch (e: Exception) {
+                            null
+                        }
                     }
                 }.awaitAll().filterNotNull()
             }
             _youtubeResults.addAll(mappedSongs)
-        } catch (e: Exception) { e.printStackTrace() }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     // Upgraded infinite pagination that doesn't break the UI
@@ -505,14 +487,19 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     // ═══════════════════════════════════════
 
     // 🟢 DYNAMIC RECOMMENDATION QUEUE ENGINE
-     fun loadMoreRecommendations(seedSong: Song) {
+    fun loadMoreRecommendations(seedSong: Song) {
         if (isLoadingRecommendations.value) return // 🟢 FIXED: Added .value
         viewModelScope.launch {
             try {
                 isLoadingRecommendations.value = true // 🟢 FIXED: Added .value
-                val artistToSearch = seedSong.artist.split(",").firstOrNull()?.trim() ?: seedSong.artist
+                val artistToSearch =
+                    seedSong.artist.split(",").firstOrNull()?.trim() ?: seedSong.artist
 
-                val response = RetrofitClient.api.searchSongs(query = artistToSearch, page = recPage, limit = 30)
+                val response = RetrofitClient.api.searchSongs(
+                    query = artistToSearch,
+                    page = recPage,
+                    limit = 30
+                )
 
                 if (response.isSuccessful) {
                     val results = response.body()?.data?.results ?: emptyList()
@@ -551,7 +538,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             try {
                 // Last.fm top tracks chart — NO login needed
-                val url = "https://ws.audioscrobbler.com/2.0/?method=chart.getTopTracks&api_key=e2427f83cfff636cb919ccdc4db1b4c1&format=json&limit=20"
+                val url =
+                    "https://ws.audioscrobbler.com/2.0/?method=chart.getTopTracks&api_key=e2427f83cfff636cb919ccdc4db1b4c1&format=json&limit=20"
                 val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
                 connection.requestMethod = "GET"
                 if (connection.responseCode == 200) {
@@ -583,13 +571,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                     source = "saavn"
                                 )
                             )
-                        } catch (e: Exception) { continue }
+                        } catch (e: Exception) {
+                            continue
+                        }
                     }
                     if (publicSongs.isNotEmpty()) {
                         _publicCharts.value = publicSongs
                     }
                 }
-            } catch (e: Exception) { e.printStackTrace() }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
@@ -607,19 +599,25 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 val resolved = topTracks.take(15).mapNotNull { lastFmTrack ->
                     try {
                         val query = "${lastFmTrack.name} ${lastFmTrack.artist}"
-                        val response = RetrofitClient.api.searchSongs(query = query, page = 1, limit = 3)
-                        val best = response.body()?.data?.results?.firstOrNull() ?: return@mapNotNull null
+                        val response =
+                            RetrofitClient.api.searchSongs(query = query, page = 1, limit = 3)
+                        val best =
+                            response.body()?.data?.results?.firstOrNull() ?: return@mapNotNull null
                         val url = best.downloadUrl.lastOrNull()?.url ?: return@mapNotNull null
 
                         Song(
                             id = best.id,
                             title = lastFmTrack.name,
                             artist = lastFmTrack.artist,
-                            albumArt = lastFmTrack.imageUrl.ifEmpty { best.image.lastOrNull()?.url ?: "" },
+                            albumArt = lastFmTrack.imageUrl.ifEmpty {
+                                best.image.lastOrNull()?.url ?: ""
+                            },
                             streamUrl = url,
                             source = "saavn"
                         )
-                    } catch (e: Exception) { null }
+                    } catch (e: Exception) {
+                        null
+                    }
                 }
                 lastFmTopTracks.value = resolved
 
@@ -636,19 +634,25 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 val resolved = recent.take(15).mapNotNull { track ->
                     try {
                         val query = "${track.name} ${track.artist}"
-                        val response = RetrofitClient.api.searchSongs(query = query, page = 1, limit = 3)
-                        val best = response.body()?.data?.results?.firstOrNull() ?: return@mapNotNull null
+                        val response =
+                            RetrofitClient.api.searchSongs(query = query, page = 1, limit = 3)
+                        val best =
+                            response.body()?.data?.results?.firstOrNull() ?: return@mapNotNull null
                         val url = best.downloadUrl.lastOrNull()?.url ?: return@mapNotNull null
 
                         Song(
                             id = best.id,
                             title = track.name,
                             artist = track.artist,
-                            albumArt = track.imageUrl.ifEmpty { best.image.lastOrNull()?.url ?: "" },
+                            albumArt = track.imageUrl.ifEmpty {
+                                best.image.lastOrNull()?.url ?: ""
+                            },
                             streamUrl = url,
                             source = "saavn"
                         )
-                    } catch (e: Exception) { null }
+                    } catch (e: Exception) {
+                        null
+                    }
                 }
                 lastFmRecentTracks.value = resolved
             }
@@ -657,6 +661,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     // 🟢 Smart recommendations via Last.fm global similar tracks (NO LOGIN REQUIRED)
     // 🟢 INFINITE AUTO-PILOT QUEUE ENGINE
+    // 🟢 INFINITE AUTO-PILOT QUEUE ENGINE
     fun loadLastFmRecommendations(currentSong: Song) {
         if (isLoadingRecommendations.value) return
 
@@ -664,10 +669,19 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 isLoadingRecommendations.value = true
 
-                // 🔥 MAX POWER: Ask Last.fm for 50 similar tracks to build a massive continuous radio station
-                val similar = LastFmRepository.getSimilarTracks(track = currentSong.title, artist = currentSong.artist)
+                // 🟢 FIX: Clean the artist name here too!
+                val cleanArtist =
+                    currentSong.artist.split(",").firstOrNull()?.trim() ?: currentSong.artist
+
+                // 🔥 MAX POWER: Ask Last.fm using ONLY the primary artist
+                val similar = LastFmRepository.getSimilarTracks(
+                    track = currentSong.title,
+                    artist = cleanArtist
+                )
 
                 if (similar.isEmpty()) {
+// ... rest of the function remains exactly the same ...
+
                     loadMoreRecommendations(currentSong) // Fallback to Saavn
                     return@launch
                 }
@@ -681,8 +695,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                 if (isJunk(track.name, currentSong)) return@async null
 
                                 val query = "${track.name} ${track.artist}"
-                                val response = RetrofitClient.api.searchSongs(query = query, page = 1, limit = 2)
-                                val best = response.body()?.data?.results?.firstOrNull() ?: return@async null
+                                val response = RetrofitClient.api.searchSongs(
+                                    query = query,
+                                    page = 1,
+                                    limit = 2
+                                )
+                                val best = response.body()?.data?.results?.firstOrNull()
+                                    ?: return@async null
                                 val url = best.downloadUrl.lastOrNull()?.url ?: return@async null
 
                                 Song(
@@ -693,14 +712,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                     streamUrl = url,
                                     source = "saavn"
                                 )
-                            } catch (e: Exception) { null }
+                            } catch (e: Exception) {
+                                null
+                            }
                         }
                     }.awaitAll().filterNotNull()
                 }
 
                 if (resolved.isNotEmpty()) {
                     // Inject these fresh 20 tracks into the UI row AND the background player queue!
-                    val combined = (resolved + _recommendedSongs.value).distinctBy { it.id }.take(50)
+                    val combined =
+                        (resolved + _recommendedSongs.value).distinctBy { it.id }.take(50)
                     _recommendedSongs.value = combined
                     PlayerManager.addToQueue(resolved)
                 }
@@ -739,8 +761,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     })
                 }
-            } catch (e: Exception) { e.printStackTrace() }
-            finally { _isSearching.value = false }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                _isSearching.value = false
+            }
         }
     }
 
@@ -761,10 +786,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     })
                 }
-            } catch (e: Exception) { e.printStackTrace() }
-            finally { _isSearching.value = false }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                _isSearching.value = false
+            }
         }
     }
+
     fun loadAlbumById(albumId: String) {
         viewModelScope.launch {
             try {
@@ -788,8 +817,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     }
                     _albumTracks.addAll(newSongs)
                 }
-            } catch (e: Exception) { e.printStackTrace() }
-            finally { isAlbumLoading.value = false }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                isAlbumLoading.value = false
+            }
         }
     }
 
@@ -817,10 +849,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     }
                     _albumTracks.addAll(newSongs)
                 }
-            } catch (e: Exception) { e.printStackTrace() }
-            finally { isAlbumLoading.value = false }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                isAlbumLoading.value = false
+            }
         }
     }
+
     private fun parseLrc(lrc: String): List<LrcLine> {
         val lines = mutableListOf<LrcLine>()
         // Regex to capture [mm:ss.xx] format
@@ -837,6 +873,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     init {
+        // 🟢 1. RE-VIVE DYNAMIC ARTIST: Delay slightly to ensure global data is loaded, then trigger
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(1000)
+            if (globalFollowedArtists.isNotEmpty()) {
+                generateDynamicArtistRow(globalFollowedArtists)
+            }
+        }
 
         // ═══════════════════════════════════════
         // 🟢 THE LAST.FM SCROBBLER & TELEMETRY TRACKER
@@ -854,12 +897,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         // 1. Log to our Local Telemetry
                         com.ant.tunes.player.AppDataManager.incrementPlayCount(appContext, song)
 
+                        // 🟢 ADDED THIS: Instantly refresh the UI leaderboard!
+                        PlayerManager.refreshTopTracks(appContext)
+
+
                         // 2. Silently update Last.fm to train the algorithm!
                         if (isLastFmConnected.value) {
                             try {
-                                // Calls your repository to scrobble the track
                                 LastFmRepository.scrobbleTrack(appContext, song.title, song.artist)
-                            } catch (e: Exception) { e.printStackTrace() }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
                         }
                     }
                 }
@@ -875,10 +923,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-        // 🟢 1. ALWAYS load trending data immediately for all users
+        // 🟢 2. ALWAYS load trending data immediately for all users
         fetchPublicCharts()
 
-        // 🟢 2. ONLY load private data if they logged into Last.fm
+        // 🟢 3. ONLY load private data if they logged into Last.fm
         if (LastFmAuthManager.isLoggedIn.value) {
             fetchLastFmData()
         }
@@ -888,12 +936,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             loadLastFmRecommendations(seedSong)
         }
 
-        // 🟢 4. Auto-fetch lyrics
+        // 🟢 4. Auto-fetch Lyrics, Albums AND initial Recommendations
         viewModelScope.launch {
             PlayerManager.currentSong.collect { song ->
                 if (song != null) {
                     fetchLyrics(song)
-                    // 🟢 DELETED the LocalHistoryManager tracker from here!
+
+                    // Fetch albums for the primary artist
+                    val cleanArtist = song.artist.split(",").firstOrNull()?.trim() ?: song.artist
+                    fetchSuggestedAlbums(cleanArtist)
+
+                    // 🟢 THE NEW USER FIX: If "Made For You" is empty, generate it immediately!
+                    if (_recommendedSongs.value.isEmpty()) {
+                        loadLastFmRecommendations(song)
+                    }
                 }
             }
         }

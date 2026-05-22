@@ -415,8 +415,8 @@ fun MiniPlayerBar(
             .fillMaxWidth()
             .height(67.dp)
             .clip(RoundedCornerShape(32.dp))
-            .background(AntBlack.copy(alpha = 0.80f))
-            .border(1.dp, accent.copy(alpha = 0.4f), RoundedCornerShape(36.dp))
+            .background(AntBlack.copy(alpha = 0.90f))
+            .border(1.dp, accent.copy(alpha = 0.5f), RoundedCornerShape(36.dp))
             .clickable { onClick() }
     ) {
         Row(

@@ -41,7 +41,6 @@ class MusicService : MediaSessionService() {
         val imageLoader = ImageLoader(this)
 
         // 🔥 THEN collect updates
-        // 🔥 THEN collect updates
         serviceScope.launch {
             PlayerManager.currentSong.collect { song ->
                 val session = mediaSession ?: return@collect
@@ -87,6 +86,24 @@ class MusicService : MediaSessionService() {
                     e.printStackTrace()
                 }
             }
+        }
+    }
+
+    // ═══════════════════════════════════════
+    // 🟢 THE FIX FOR THE CAROUSEL PERSISTENCE
+    // ═══════════════════════════════════════
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // 1. Pause the player
+        PlayerManager.getPlayer()?.pause()
+
+        // 2. 🟢 THE SPOTIFY TRICK: Drop the Foreground Service to save battery
+        // and remove the "1 app is active" warning, but DETACH the notification
+        // so the media carousel stays perfectly alive!
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_DETACH)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(false)
         }
     }
 

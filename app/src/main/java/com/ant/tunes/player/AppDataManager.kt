@@ -12,7 +12,7 @@ import kotlin.collections.emptyList
 object AppDataManager {
 
     // ═══════════════════════════════════════
-    // 🟢 TELEMETRY & PLAY COUNTS (SPOTIFY WRAPPED ENGINE)
+    // 🟢 TELEMETRY & LIVE LEADERBOARD ENGINE
     // ═══════════════════════════════════════
 
     fun incrementPlayCount(context: Context, song: Song) {
@@ -20,13 +20,58 @@ object AppDataManager {
         val currentCount = prefs.getInt("play_count_${song.id}", 0)
         prefs.edit().putInt("play_count_${song.id}", currentCount + 1).apply()
 
-        // Optional: We can expand this later to save the whole song object
-        // if we want to build a dedicated "Most Played" UI list!
+        // 🟢 NEW: Update the Live Leaderboard!
+        val currentTopTracks = loadTopTracks(context).toMutableList()
+        currentTopTracks.removeAll { it.id == song.id } // Remove old entry
+        currentTopTracks.add(song) // Add updated entry
+
+        // Sort the entire list by who has the highest play count
+        currentTopTracks.sortByDescending { getPlayCount(context, it.id) }
+
+        // Save the top 20 most played songs back to the device
+        saveTopTracks(context, currentTopTracks.take(20))
     }
 
     fun getPlayCount(context: Context, songId: String): Int {
         val prefs = context.getSharedPreferences("ant_telemetry", Context.MODE_PRIVATE)
         return prefs.getInt("play_count_$songId", 0)
+    }
+
+    private fun saveTopTracks(context: Context, songs: List<Song>) {
+        val prefs = context.getSharedPreferences("ant_telemetry", Context.MODE_PRIVATE)
+        val array = JSONArray()
+        songs.forEach { song ->
+            val obj = JSONObject()
+            obj.put("id", song.id)
+            obj.put("title", song.title)
+            obj.put("artist", song.artist)
+            obj.put("albumArt", song.albumArt)
+            obj.put("streamUrl", song.streamUrl)
+            obj.put("album", song.album ?: "")
+            obj.put("source", song.source ?: "")
+            array.put(obj)
+        }
+        prefs.edit().putString("top_tracks_data", array.toString()).apply()
+    }
+
+    fun loadTopTracks(context: Context): List<Song> {
+        val prefs = context.getSharedPreferences("ant_telemetry", Context.MODE_PRIVATE)
+        val json = prefs.getString("top_tracks_data", null) ?: return emptyList()
+        return try {
+            val array = JSONArray(json)
+            (0 until array.length()).map { i ->
+                val obj = array.getJSONObject(i)
+                Song(
+                    id = obj.getString("id"),
+                    title = obj.getString("title"),
+                    artist = obj.getString("artist"),
+                    albumArt = obj.getString("albumArt"),
+                    streamUrl = obj.getString("streamUrl"),
+                    album = obj.optString("album", ""),
+                    source = obj.optString("source", "")
+                )
+            }
+        } catch (e: Exception) { emptyList() }
     }
 
     // ── LIKED SONGS ──

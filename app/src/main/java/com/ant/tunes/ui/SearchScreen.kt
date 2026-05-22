@@ -403,18 +403,22 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
                         item {
                             Text("TRENDING TRACKS", style = MaterialTheme.typography.labelLarge, color = AntText3, modifier = Modifier.padding(bottom = 12.dp))
                         }
-                        itemsIndexed(items = trendingSongs.take(15)) { _, song ->
+                        // 🟢 FIXED: Changed '_' to 'index' so we can pass it to the player
+                        itemsIndexed(items = trendingSongs.take(15)) { index, song ->
                             Row(
                                 modifier = Modifier.fillMaxWidth().clickable(
                                     indication = LocalIndication.current,
                                     interactionSource = remember { MutableInteractionSource() }) {
-                                    vm.playFreshTrack(context, song)
+
+                                    // 🟢 FIXED: Send the full list and exact index to update the metadata queue!
+                                    PlayerManager.play(context, trendingSongs.take(15), index)
                                     RequestFullScreenPlayer = true
+
                                 }
                                     .padding(vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Image(
+                            Image(
                                     painter = rememberAsyncImagePainter(song.albumArt),
                                     contentDescription = null,
                                     modifier = Modifier.size(50.dp).clip(RoundedCornerShape(12.dp))
@@ -484,13 +488,15 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
                             Text("${filteredResults.size} SONGS", style = MaterialTheme.typography.labelMedium, color = AntText3, modifier = Modifier.padding(vertical = 8.dp))
 
                             LazyColumn(state = listState, contentPadding = PaddingValues(bottom = 160.dp)) {
-                                itemsIndexed(items = filteredResults, key = { index, song -> "${song.source}_${song.id}_$index" }) { _, song ->
+                                // 🟢 FIXED: Changed '_' to 'index'
+                                itemsIndexed(items = filteredResults, key = { index, song -> "${song.source}_${song.id}_$index" }) { index, song ->
                                     SwipeableSongRow(
                                         song = song,
                                         context = context,
                                         accent = accent,
                                         onSongClick = {
-                                            PlayerManager.play(context, filteredResults, filteredResults.indexOf(song))
+                                            // 🟢 FIXED: Use the exact layout index, guaranteeing a 1:1 metadata match
+                                            PlayerManager.play(context, filteredResults, index)
                                             saveSearch(query)
                                             focusManager.clearFocus()
                                             RequestFullScreenPlayer = true

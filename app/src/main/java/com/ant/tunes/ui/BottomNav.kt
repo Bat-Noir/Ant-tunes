@@ -34,7 +34,7 @@ fun BottomNav(
             .padding(horizontal = 16.dp)
             .height(72.dp)
             .clip(RoundedCornerShape(36.dp))
-            .background(AntBlack.copy(alpha = 0.85f))
+            .background(AntBlack.copy(alpha = 0.90f))
             .border(
                 width = 1.dp,
                 color = Color.White.copy(alpha = 0.30f),

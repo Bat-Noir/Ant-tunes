@@ -32,12 +32,12 @@ object NotificationHelper {
         val manager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-        // ✅ STRONGER CHANNEL
+        // 🟢 SILENT CHANNEL CONFIGURATION
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 channelId,
                 "Music Playback",
-                NotificationManager.IMPORTANCE_DEFAULT // 🔥 FIXED
+                NotificationManager.IMPORTANCE_LOW // 🟢 CHANGED: This guarantees absolute silence!
             )
             manager.createNotificationChannel(channel)
         }
@@ -56,20 +56,16 @@ object NotificationHelper {
             .setContentText(song.artist)
             .setSmallIcon(R.drawable.ic_stat_name)
             .setLargeIcon(bitmap?.copy(Bitmap.Config.ARGB_8888, false))
-
-            .setContentIntent(pendingIntent) // 🔥 CRITICAL FIX
-
+            .setContentIntent(pendingIntent)
             .setStyle(
                 MediaStyle()
                     .setMediaSession(mediaSession.sessionCompatToken)
             )
-
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setOngoing(true)
-
             .build()
     }
 }
