@@ -37,7 +37,7 @@ Stream music from multiple sources with a clean UI and smooth playback.
 
 ## 📦 Download
 
-👉 [Download Latest APK]([https://github.com/YOUR_USERNAME/ant-tunes/releases/latest])
+👉 [Download Latest APK]([[https://github.com/YOUR_USERNAME/ant-tunes/releases/latest]](https://github.com/Bat-Noir/Ant-tunes/releases/latest))
 
 ---
 
