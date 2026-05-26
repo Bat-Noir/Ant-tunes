@@ -1,8 +1,11 @@
 package com.ant.tunes.ui
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -72,33 +75,14 @@ import com.ant.tunes.viewmodel.PlayerViewModel
 var IsHomeSubScreenActive by mutableStateOf(false)
 
 @Composable
-fun PlayerScreen(onOpenProfile: () -> Unit = {}) {
+fun PlayerScreen(
+    onOpenProfile: () -> Unit = {},
+    onOpenSettings: () -> Unit = {}
+) {
     val context = LocalContext.current
-    val isPlaying by PlayerManager.isPlayingFlow.collectAsState()
     val vm: PlayerViewModel = viewModel()
     val recommendedSongs by vm.recommendedSongs.collectAsState()
     var showCache by remember { mutableStateOf(false) }
-    var expanded by remember { mutableStateOf(false) }
-
-    LaunchedEffect(expanded) {
-        vm.isPlayerExpanded.value = expanded
-    }
-
-    // PATCH 1 — observe RequestFullScreenPlayer
-    LaunchedEffect(RequestFullScreenPlayer) {
-        if (RequestFullScreenPlayer) {
-            expanded = true
-            RequestFullScreenPlayer = false
-        }
-    }
-
-    val expandAnim by animateFloatAsState(
-        targetValue = if (expanded) 1f else 0f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMediumLow
-        ), label = "expand"
-    )
 
     LaunchedEffect(Unit) {
         PlayerManager.loadLibrary(context)
@@ -107,32 +91,15 @@ fun PlayerScreen(onOpenProfile: () -> Unit = {}) {
 
     Box(modifier = Modifier.fillMaxSize()) {
 
-        // 🟢 THIS IS THE MAGIC LINK: Calling your newly isolated HomeScreen file!
         HomeScreen(
             vm = vm,
             recommendedSongs = recommendedSongs,
-            onMiniPlayerClick = { expanded = true },
+            onMiniPlayerClick = { vm.isPlayerExpanded.value = true }, // 🟢 Triggers global state directly!
             onOpenProfile = onOpenProfile,
+            onOpenSettings = onOpenSettings,
             showCache = showCache,
             onShowCacheChange = { showCache = it }
         )
-
-        if (expandAnim > 0f) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .alpha(expandAnim)
-                    .graphicsLayer { translationY = (1f - expandAnim) * 800f }
-                    .background(AntBlack)
-                    .pointerInput(Unit) {
-                        detectVerticalDragGestures { _, dragAmount ->
-                            if (dragAmount > 30f) expanded = false
-                        }
-                    }
-            ) {
-                FullPlayer(isPlaying = isPlaying, onCollapse = { expanded = false })
-            }
-        }
 
         // 🟢 WRAP IN A DIALOG TO COVER THE BOTTOM NAV
         if (showCache) {
@@ -148,6 +115,7 @@ fun PlayerScreen(onOpenProfile: () -> Unit = {}) {
         }
     }
 }
+
 
 // ═══════════════════════════════════════
 // 🎵 FULL PLAYER
@@ -172,8 +140,32 @@ fun FullPlayer(isPlaying: Boolean, onCollapse: () -> Unit) {
         globalLikedSongs.any { it.id == song.id }
     } ?: false
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Column(
+    // 🟢 1. DYNAMIC COLOR STATES
+    var dominantColor by remember { mutableStateOf(AntBlack) }
+    val animatedColor by animateColorAsState(
+        targetValue = dominantColor,
+        animationSpec = tween(durationMillis = 1200, easing = LinearOutSlowInEasing),
+        label = "bg_color"
+    )
+
+    // 🟢 2. APPLY THE FULL-BLEED GLOW GRADIENT
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                androidx.compose.ui.graphics.Brush.verticalGradient(
+                    colors = listOf(
+                        animatedColor.copy(alpha = 0.85f), // 🔥 High intensity at the top
+                        animatedColor.copy(alpha = 0.4f),  // 🔥 Color bleeds through the middle
+                        AntBlack // Deep black at the bottom so controls pop
+                    )
+                    // Removed endY so it stretches perfectly to the bottom of any screen size!
+                )
+            )
+    ) {
+
+    Column(
+            // ... (keep the rest of your Column modifiers exactly as they were)
             modifier = Modifier
                 .fillMaxSize()
                 .padding(
@@ -249,14 +241,20 @@ fun FullPlayer(isPlaying: Boolean, onCollapse: () -> Unit) {
                 contentAlignment = Alignment.Center
             ) {
                 if (selectedTab == "Art") {
-                    VinylArt(imageUrl = currentSong?.albumArt, isPlaying = isPlaying)
+                    VinylArt(
+                        imageUrl = currentSong?.albumArt,
+                        isPlaying = isPlaying,
+                        onColorExtracted = { dominantColor = it } // 🟢 FIXED: Receives the color!
+                    )
                 } else {
                     LyricsTab(
                         lyrics = currentLyrics,
                         isLoading = isLyricsLoading,
                         lrcLines = lrcLines,
                         isFullScreen = isLyricsFullScreen,
-                        onToggleFullScreen = { isLyricsFullScreen = !isLyricsFullScreen }
+                        onToggleFullScreen = { isLyricsFullScreen = !isLyricsFullScreen },
+                        // 🟢 WIRED: Triggers the ViewModel to fetch again for the current song!
+                        onRetry = { currentSong?.let { vm.fetchLyrics(it) } }
                     )
                 }
             }

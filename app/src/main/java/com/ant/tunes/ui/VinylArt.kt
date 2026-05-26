@@ -1,5 +1,7 @@
 package com.ant.tunes.ui
 
+import android.content.Context
+import android.graphics.drawable.BitmapDrawable
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
@@ -23,16 +25,57 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.palette.graphics.Palette
 import coil.compose.AsyncImage
+import coil.imageLoader
+import coil.request.ImageRequest
+import coil.request.SuccessResult
 import com.ant.tunes.ui.theme.*
 
 @Composable
-fun VinylArt(imageUrl: String?, isPlaying: Boolean) {
-    var isSquareFormat by remember { mutableStateOf(false) }
+fun VinylArt(
+    imageUrl: String?,
+    isPlaying: Boolean,
+    onColorExtracted: (Color) -> Unit // 🟢 THE GLOW CALLBACK
+) {
+    val context = LocalContext.current
+    val prefs = context.getSharedPreferences("ant_prefs", Context.MODE_PRIVATE)
+
+    // 🟢 PERMANENT MEMORY: Loads your last choice, defaults to false (vinyl)
+    var isSquareFormat by remember { mutableStateOf(prefs.getBoolean("is_square_format", false)) }
 
     var rotation by remember { mutableFloatStateOf(0f) }
     var floatTime by remember { mutableFloatStateOf(0f) }
+
+    // 🟢 DYNAMIC COLOR ENGINE: Scans the album art and extracts the color
+    LaunchedEffect(imageUrl) {
+        if (imageUrl != null) {
+            val request = ImageRequest.Builder(context)
+                .data(imageUrl)
+                .allowHardware(false) // 🟢 Critical: Allows pixel reading
+                .size(400) // Small size for instant processing
+                .build()
+
+            val result = context.imageLoader.execute(request)
+            if (result is SuccessResult) {
+                val bitmap = (result.drawable as? BitmapDrawable)?.bitmap
+                if (bitmap != null) {
+                    val palette = Palette.from(bitmap).generate()
+                    // Get a rich, dark vibrant color (fallback to dark muted, then dark gray)
+                    val vibrant = palette.getDarkVibrantColor(
+                        palette.getDarkMutedColor(
+                            palette.getDominantColor(android.graphics.Color.parseColor("#121212"))
+                        )
+                    )
+                    onColorExtracted(Color(vibrant))
+                }
+            }
+        } else {
+            onColorExtracted(AntBlack)
+        }
+    }
 
     LaunchedEffect(isPlaying) {
         if (isPlaying) {
@@ -59,13 +102,14 @@ fun VinylArt(imageUrl: String?, isPlaying: Boolean) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            // 🟢 REDUCED: Scaled down from 380dp to 320dp
             .height(320.dp)
             .clickable(
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() }
             ) {
+                // 🟢 SAVES TO MEMORY INSTANTLY
                 isSquareFormat = !isSquareFormat
+                prefs.edit().putBoolean("is_square_format", isSquareFormat).apply()
             },
         contentAlignment = Alignment.Center
     ) {
@@ -73,7 +117,7 @@ fun VinylArt(imageUrl: String?, isPlaying: Boolean) {
             if (isSquare) {
                 Box(
                     modifier = Modifier
-                        .size(280.dp) // 🟢 REDUCED: Scaled down from 330dp
+                        .size(280.dp)
                         .graphicsLayer { translationY = floatY }
                         .clip(RoundedCornerShape(24.dp))
                         .background(AntSurface2)
@@ -87,13 +131,10 @@ fun VinylArt(imageUrl: String?, isPlaying: Boolean) {
                     )
                 }
             } else {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.size(320.dp)
-                ) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.size(320.dp)) {
                     Box(
                         modifier = Modifier
-                            .size(280.dp) // 🟢 REDUCED: Scaled down from 330dp
+                            .size(280.dp)
                             .graphicsLayer { rotationZ = rotation }
                             .clip(CircleShape)
                             .background(AntBlack)
@@ -105,14 +146,12 @@ fun VinylArt(imageUrl: String?, isPlaying: Boolean) {
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.size(130.dp).align(Alignment.Center).clip(CircleShape)
                         )
-                        Box(
-                            modifier = Modifier.size(12.dp).align(Alignment.Center).background(AntBlack, CircleShape).border(1.dp, Color.DarkGray, CircleShape)
-                        )
+                        Box(modifier = Modifier.size(12.dp).align(Alignment.Center).background(AntBlack, CircleShape).border(1.dp, Color.DarkGray, CircleShape))
                     }
 
                     Canvas(
                         modifier = Modifier
-                            .size(160.dp) // 🟢 REDUCED: Scaled down from 190dp
+                            .size(160.dp)
                             .align(Alignment.TopEnd)
                             .offset(x = 10.dp, y = (-20).dp)
                             .graphicsLayer {
@@ -125,7 +164,6 @@ fun VinylArt(imageUrl: String?, isPlaying: Boolean) {
 
                         drawCircle(color = Color(0xFF222222), radius = 28f, center = pivot)
                         drawCircle(color = Color(0xFF4FC3F7), radius = 6f, center = pivot)
-
                         drawLine(color = Color(0xFFCCCCCC), start = pivot, end = endPoint, strokeWidth = 8f, cap = StrokeCap.Round)
 
                         withTransform({

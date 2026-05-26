@@ -11,8 +11,8 @@ android {
         applicationId = "com.ant.tunes"
         minSdk = 24
         targetSdk = 36
-        versionCode = 6
-        versionName = "6.0"
+        versionCode = 7
+        versionName = "7.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -47,6 +47,7 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.3.1")
     implementation("androidx.media3:media3-common:1.3.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
+    implementation(libs.androidx.compose.animation.core)
     val room_version = "2.6.1"
     implementation("androidx.room:room-runtime:$room_version")
     implementation("androidx.room:room-ktx:$room_version")
@@ -73,6 +74,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation("androidx.palette:palette-ktx:1.0.0")
 
     // --- RETROFIT (API CALLS) ---
     implementation("com.squareup.retrofit2:retrofit:2.9.0")

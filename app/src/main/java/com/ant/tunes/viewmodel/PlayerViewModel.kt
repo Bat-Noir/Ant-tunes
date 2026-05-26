@@ -133,7 +133,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // 🟢 DUAL-SOURCE LYRICS FETCHER
-    private fun fetchLyrics(song: Song?) {
+    fun fetchLyrics(song: Song?) {
         if (song == null) {
             currentLyrics.value = null
             currentLrcLines.value = emptyList()
@@ -383,19 +383,32 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 RetrofitClient.api.searchSongs(query = query, page = searchPage, limit = 10)
             if (response.isSuccessful) {
                 val apiSongs = response.body()?.data?.results ?: emptyList()
-                val newSongs = apiSongs.mapNotNull {
-                    val url = it.downloadUrl.lastOrNull()?.url ?: return@mapNotNull null
-                    Song(
-                        id = it.id,
-                        title = it.name,
-                        artist = it.artists.primary.firstOrNull()?.name ?: "Unknown",
-                        albumArt = it.image.lastOrNull()?.url ?: "",
-                        streamUrl = url,
-                        duration = 0L,
-                        album = it.album?.name ?: "", // 🔥 Catch the real Saavn album!
-                        source = "saavn"
-                    )
+
+                // 🟢 RUN THROUGH iTUNES ENGINE IN PARALLEL
+                val newSongs = kotlinx.coroutines.coroutineScope {
+                    apiSongs.map { track ->
+                        async {
+                            val url = track.downloadUrl.lastOrNull()?.url ?: return@async null
+                            val rawTitle = track.name
+                            val rawArtist = track.artists.primary.firstOrNull()?.name ?: "Unknown"
+
+                            // Hijack Saavn artwork with pristine iTunes metadata
+                            val itunes = fetchiTunesData(rawTitle, rawArtist)
+
+                            Song(
+                                id = track.id,
+                                title = rawTitle,
+                                artist = rawArtist,
+                                albumArt = itunes?.first ?: track.image.lastOrNull()?.url ?: "",
+                                streamUrl = url,
+                                duration = 0L,
+                                album = itunes?.second ?: track.album?.name ?: "",
+                                source = "saavn"
+                            )
+                        }
+                    }.awaitAll().filterNotNull()
                 }
+
                 _results.addAll(newSongs)
                 if (newSongs.isEmpty()) searchHasMore = false else searchPage++
             }
@@ -406,8 +419,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private suspend fun fetchGaana(query: String) {
         try {
-            val response =
-                RetrofitClient.gaanaApi.searchSongs(query = query, type = "song", limit = 20)
+            val response = RetrofitClient.gaanaApi.searchSongs(query = query, type = "song", limit = 20)
             if (response.isSuccessful) {
                 val songs = response.body()?.results ?: emptyList()
                 val mappedSongs = kotlinx.coroutines.coroutineScope {
@@ -417,23 +429,24 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                 val songDetail = RetrofitClient.gaanaApi.getSong(gaanaSong.seokey)
                                 val body = songDetail.body()
 
-                                // 🟢 GSON LANDMINE REMOVED! We no longer check body?.status == false
-
-                                val streamDetail =
-                                    RetrofitClient.gaanaApi.getStreamUrl(gaanaSong.seokey)
+                                val streamDetail = RetrofitClient.gaanaApi.getStreamUrl(gaanaSong.seokey)
                                 val streamBody = streamDetail.body()
 
-                                // 🟢 Check the dedicated stream API first, fallback to metadata link
-                                val audioUrl =
-                                    streamBody?.audio_url ?: body?.audio_url ?: return@async null
+                                val audioUrl = streamBody?.audio_url ?: body?.audio_url ?: return@async null
+
+                                val rawTitle = body?.title ?: gaanaSong.title
+                                val rawArtist = body?.artist ?: gaanaSong.subtitle
+
+                                // 🟢 THE iTUNES UPGRADE FOR GAANA
+                                val itunes = fetchiTunesData(rawTitle, rawArtist)
 
                                 Song(
                                     id = gaanaSong.id,
-                                    title = body?.title ?: gaanaSong.title,
-                                    artist = body?.artist ?: gaanaSong.subtitle,
-                                    albumArt = body?.thumb ?: gaanaSong.thumb,
+                                    title = rawTitle,
+                                    artist = rawArtist,
+                                    albumArt = itunes?.first ?: body?.thumb ?: gaanaSong.thumb, // HD Cover injected!
                                     streamUrl = audioUrl,
-                                    album = body?.album_title ?: "",
+                                    album = itunes?.second ?: body?.album_title ?: "",          // Real album injected!
                                     permanentUrl = gaanaSong.seokey,
                                     source = "gaana"
                                 )
@@ -442,12 +455,81 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             }
                         }
                     }.awaitAll().filterNotNull()
-                    // 🟢 AGGRESSIVE FILTER REMOVED! Let the API's search algorithm do the work.
                 }
                 _gaanaResults.addAll(mappedSongs)
             }
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+    }
+
+    // ═══════════════════════════════════════
+    // 🟢 TASK 6: THE iTUNES METADATA ENGINE
+    // ═══════════════════════════════════════
+    private suspend fun fetchiTunesData(title: String, artist: String): Pair<String, String>? {
+        return withContext(Dispatchers.IO) {
+            try {
+                // Clean garbage like (Official Video) so iTunes can match the real song
+                val cleanTitle = title.replace(Regex("\\[.*?\\]|\\(.*?\\)|(?i)official|video|audio|lyric"), "").trim()
+                val cleanArtist = artist.split(",").firstOrNull()?.trim() ?: artist
+
+                val query = java.net.URLEncoder.encode("$cleanTitle $cleanArtist", "UTF-8")
+                val urlStr = "https://itunes.apple.com/search?term=$query&entity=song&limit=1"
+
+                val conn = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 3000
+                conn.readTimeout = 3000
+
+                if (conn.responseCode == 200) {
+                    val resp = conn.inputStream.bufferedReader().readText()
+                    val json = org.json.JSONObject(resp)
+                    val results = json.optJSONArray("results")
+                    if (results != null && results.length() > 0) {
+                        val track = results.getJSONObject(0)
+                        val artwork100 = track.optString("artworkUrl100", "")
+                        val albumName = track.optString("collectionName", "")
+
+                        if (artwork100.isNotBlank()) {
+                            // 🔥 THE HACK: Turn 100x100 into massive 1000x1000 HD art!
+                            val hdArt = artwork100.replace("100x100bb.jpg", "1000x1000bb.jpg")
+                            return@withContext Pair(hdArt, albumName)
+                        }
+                    }
+                }
+                null
+            } catch (e: Exception) {
+                null // If it fails, silently fail and use original art. No crashes!
+            }
+        }
+    }
+
+    // 🟢 FETCHES PRISTINE ALBUM ART FOR ALBUM SEARCH RESULTS
+    private suspend fun fetchiTunesAlbumArt(albumName: String, artistName: String): String? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val cleanAlbum = albumName.replace(Regex("\\[.*?\\]|\\(.*?\\)"), "").trim()
+                val query = java.net.URLEncoder.encode("$cleanAlbum $artistName", "UTF-8")
+                val urlStr = "https://itunes.apple.com/search?term=$query&entity=album&limit=1"
+
+                val conn = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 2000
+                conn.readTimeout = 2000
+
+                if (conn.responseCode == 200) {
+                    val resp = conn.inputStream.bufferedReader().readText()
+                    val json = org.json.JSONObject(resp)
+                    val results = json.optJSONArray("results")
+                    if (results != null && results.length() > 0) {
+                        val artwork100 = results.getJSONObject(0).optString("artworkUrl100", "")
+                        if (artwork100.isNotBlank()) {
+                            return@withContext artwork100.replace("100x100bb.jpg", "1000x1000bb.jpg")
+                        }
+                    }
+                }
+                null
+            } catch (e: Exception) {
+                null
+            }
         }
     }
 
@@ -458,9 +540,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 results.map { song ->
                     async {
                         try {
-                            val audioUrl =
-                                NewPipeHelper.getAudioUrl(song.streamUrl) ?: return@async null
-                            song.copy(streamUrl = audioUrl, source = "youtube")
+                            val audioUrl = NewPipeHelper.getAudioUrl(song.streamUrl) ?: return@async null
+
+                            // 🟢 THE iTUNES UPGRADE FOR YOUTUBE
+                            val itunes = fetchiTunesData(song.title, song.artist)
+
+                            song.copy(
+                                streamUrl = audioUrl,
+                                source = "youtube",
+                                albumArt = itunes?.first ?: song.albumArt, // HD Cover injected!
+                                album = itunes?.second ?: song.album       // Real album injected!
+                            )
                         } catch (e: Exception) {
                             null
                         }
@@ -472,6 +562,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             e.printStackTrace()
         }
     }
+
 
     // Upgraded infinite pagination that doesn't break the UI
     fun loadMore(query: String) {
@@ -661,7 +752,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     // 🟢 Smart recommendations via Last.fm global similar tracks (NO LOGIN REQUIRED)
     // 🟢 INFINITE AUTO-PILOT QUEUE ENGINE
-    // 🟢 INFINITE AUTO-PILOT QUEUE ENGINE
     fun loadLastFmRecommendations(currentSong: Song) {
         if (isLoadingRecommendations.value) return
 
@@ -744,28 +834,60 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _artistResults = mutableStateListOf<com.ant.tunes.ui.BrowseCard>()
     val artistSearchList: List<com.ant.tunes.ui.BrowseCard> get() = _artistResults
 
+    // ═══════════════════════════════════════
+    // 🟢 TASK 7.6: THE RUTHLESS iTUNES ENGINE
+    // ═══════════════════════════════════════
+
+    // 🔥 THE BOUNCER: Kills karaoke, 8-bit, and tribute garbage instantly
+    private fun isJunkText(text: String): Boolean {
+        return Regex("(?i)(karaoke|tribute|8-bit|16-bit|cover|instrumental|mashup|emulation|lullaby|arcade|originally performed|piano)").containsMatchIn(text)
+    }
+
     fun searchAlbums(query: String) {
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             _isSearching.value = true
             _albumResults.clear()
             try {
-                val response = RetrofitClient.api.searchAlbums(query = query, page = 1)
-                if (response.isSuccessful) {
-                    val albums = response.body()?.data?.results ?: emptyList()
-                    _albumResults.addAll(albums.map {
-                        com.ant.tunes.ui.BrowseCard(
-                            id = it.id,
-                            title = it.name ?: "Unknown",
-                            imageUrl = it.image.lastOrNull()?.url ?: ""
-                        )
-                    })
+                val itunesCards = mutableListOf<com.ant.tunes.ui.BrowseCard>()
+                withContext(Dispatchers.IO) {
+                    val itunesQuery = java.net.URLEncoder.encode(query, "UTF-8")
+                    val urlStr = "https://itunes.apple.com/search?term=$itunesQuery&entity=album&limit=15"
+                    val conn = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
+                    if (conn.responseCode == 200) {
+                        val results = org.json.JSONObject(conn.inputStream.bufferedReader().readText()).optJSONArray("results")
+                        if (results != null) {
+                            for (i in 0 until results.length()) {
+                                val item = results.getJSONObject(i)
+                                if (item.optString("wrapperType") == "collection") {
+                                    val albumName = item.optString("collectionName")
+                                    val artistName = item.optString("artistName")
+
+                                    // 🟢 RUTHLESS FILTER
+                                    if (isJunkText(albumName) || isJunkText(artistName)) continue
+
+                                    itunesCards.add(
+                                        com.ant.tunes.ui.BrowseCard(
+                                            id = "itunes_album_${item.optLong("collectionId")}",
+                                            title = albumName,
+                                            imageUrl = item.optString("artworkUrl100", "").replace("100x100bb.jpg", "1000x1000bb.jpg")
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            } finally {
-                _isSearching.value = false
-            }
+
+                val response = RetrofitClient.api.searchAlbums(query = query, page = 1)
+                val saavnCards = response.body()?.data?.results?.map {
+                    com.ant.tunes.ui.BrowseCard(id = it.id, title = it.name ?: "Unknown", imageUrl = it.image.lastOrNull()?.url ?: "")
+                } ?: emptyList()
+
+                val combined = (itunesCards + saavnCards).distinctBy { it.title.lowercase() }
+                _albumResults.addAll(combined)
+            } catch (e: Exception) { e.printStackTrace() }
+            finally { _isSearching.value = false }
         }
     }
 
@@ -775,22 +897,56 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             _isSearching.value = true
             _artistResults.clear()
             try {
-                val response = RetrofitClient.api.searchArtists(query = query, page = 1)
-                if (response.isSuccessful) {
-                    val artists = response.body()?.data?.results ?: emptyList()
-                    _artistResults.addAll(artists.map {
-                        com.ant.tunes.ui.BrowseCard(
-                            id = it.id,
-                            title = it.name ?: "Unknown",
-                            imageUrl = it.image.lastOrNull()?.url ?: ""
-                        )
-                    })
+                val itunesCards = mutableListOf<com.ant.tunes.ui.BrowseCard>()
+                withContext(Dispatchers.IO) {
+                    val itunesQuery = java.net.URLEncoder.encode(query, "UTF-8")
+                    // 🟢 STRICT ENTITY: ONLY search verified Apple Music Artists!
+                    val urlStr = "https://itunes.apple.com/search?term=$itunesQuery&entity=musicArtist&limit=5"
+                    val conn = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
+                    if (conn.responseCode == 200) {
+                        val results = org.json.JSONObject(conn.inputStream.bufferedReader().readText()).optJSONArray("results")
+                        if (results != null) {
+                            for (i in 0 until results.length()) {
+                                val item = results.getJSONObject(i)
+                                val artistId = item.optLong("artistId")
+                                val artistName = item.optString("artistName")
+
+                                // 🟢 RUTHLESS FILTER
+                                if (isJunkText(artistName)) continue
+
+                                // 🟢 ARTWORK STEALER: Ping their top song just for the 4K cover
+                                try {
+                                    val artUrl = "https://itunes.apple.com/lookup?id=$artistId&entity=song&limit=1"
+                                    val artConn = java.net.URL(artUrl).openConnection() as java.net.HttpURLConnection
+                                    if (artConn.responseCode == 200) {
+                                        val artResults = org.json.JSONObject(artConn.inputStream.bufferedReader().readText()).optJSONArray("results")
+                                        if (artResults != null && artResults.length() > 1) { // 0 is artist, 1 is top song
+                                            val songItem = artResults.getJSONObject(1)
+                                            val image = songItem.optString("artworkUrl100", "").replace("100x100bb.jpg", "1000x1000bb.jpg")
+                                            itunesCards.add(
+                                                com.ant.tunes.ui.BrowseCard(
+                                                    id = "itunes_artist_$artistId",
+                                                    title = artistName,
+                                                    imageUrl = image
+                                                )
+                                            )
+                                        }
+                                    }
+                                } catch (e: Exception) {}
+                            }
+                        }
+                    }
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            } finally {
-                _isSearching.value = false
-            }
+
+                val response = RetrofitClient.api.searchArtists(query = query, page = 1)
+                val saavnCards = response.body()?.data?.results?.map {
+                    com.ant.tunes.ui.BrowseCard(id = it.id, title = it.name ?: "Unknown", imageUrl = it.image.lastOrNull()?.url ?: "")
+                } ?: emptyList()
+
+                val combined = (itunesCards + saavnCards).distinctBy { it.title.lowercase() }
+                _artistResults.addAll(combined)
+            } catch (e: Exception) { e.printStackTrace() }
+            finally { _isSearching.value = false }
         }
     }
 
@@ -799,29 +955,57 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 isAlbumLoading.value = true
                 _albumTracks.clear()
+
+                if (albumId.startsWith("itunes_album_")) {
+                    val realId = albumId.replace("itunes_album_", "")
+                    withContext(Dispatchers.IO) {
+                        val urlStr = "https://itunes.apple.com/lookup?id=$realId&entity=song"
+                        val conn = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
+                        if (conn.responseCode == 200) {
+                            val results = org.json.JSONObject(conn.inputStream.bufferedReader().readText()).optJSONArray("results")
+                            if (results != null) {
+                                val ghostTracks = mutableListOf<Song>()
+                                for (i in 0 until results.length()) {
+                                    val item = results.getJSONObject(i)
+                                    val trackName = item.optString("trackName")
+
+                                    // 🟢 FILTER BY TRACK AND KILL JUNK
+                                    if (item.optString("wrapperType") == "track" && !isJunkText(trackName)) {
+                                        ghostTracks.add(
+                                            Song(
+                                                id = "itunes_${item.optLong("trackId")}",
+                                                title = trackName,
+                                                artist = item.optString("artistName"),
+                                                albumArt = item.optString("artworkUrl100", "").replace("100x100bb.jpg", "1000x1000bb.jpg"),
+                                                streamUrl = "ghost_track",
+                                                album = item.optString("collectionName"),
+                                                source = "youtube"
+                                            )
+                                        )
+                                    }
+                                }
+                                withContext(Dispatchers.Main) { _albumTracks.addAll(ghostTracks) }
+                            }
+                        }
+                    }
+                    return@launch
+                }
+
+                // Saavn Fallback
                 val response = RetrofitClient.api.getAlbumDetails(id = albumId)
                 if (response.isSuccessful) {
-                    // 🟢 FIXED: Fetching from 'songs' instead of 'results'
                     val apiSongs = response.body()?.data?.songs ?: emptyList()
                     val newSongs = apiSongs.mapNotNull {
                         val url = it.downloadUrl.lastOrNull()?.url ?: return@mapNotNull null
                         Song(
-                            id = it.id,
-                            title = it.name,
-                            artist = it.artists.primary.firstOrNull()?.name ?: "Unknown",
-                            albumArt = it.image.lastOrNull()?.url ?: "",
-                            streamUrl = url,
-                            album = it.album?.name ?: "",
-                            source = "saavn"
+                            id = it.id, title = it.name, artist = it.artists.primary.firstOrNull()?.name ?: "Unknown",
+                            albumArt = it.image.lastOrNull()?.url ?: "", streamUrl = url, album = it.album?.name ?: "", source = "saavn"
                         )
                     }
                     _albumTracks.addAll(newSongs)
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            } finally {
-                isAlbumLoading.value = false
-            }
+            } catch (e: Exception) { e.printStackTrace() }
+            finally { isAlbumLoading.value = false }
         }
     }
 
@@ -830,30 +1014,58 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 isAlbumLoading.value = true
                 _albumTracks.clear()
+
+                if (artistId.startsWith("itunes_artist_")) {
+                    val realId = artistId.replace("itunes_artist_", "")
+                    withContext(Dispatchers.IO) {
+                        val urlStr = "https://itunes.apple.com/lookup?id=$realId&entity=song&limit=30"
+                        val conn = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
+                        if (conn.responseCode == 200) {
+                            val results = org.json.JSONObject(conn.inputStream.bufferedReader().readText()).optJSONArray("results")
+                            if (results != null) {
+                                val ghostTracks = mutableListOf<Song>()
+                                for (i in 0 until results.length()) {
+                                    val item = results.getJSONObject(i)
+                                    val trackName = item.optString("trackName")
+
+                                    // 🟢 FILTER BY TRACK AND KILL JUNK
+                                    if (item.optString("wrapperType") == "track" && !isJunkText(trackName)) {
+                                        ghostTracks.add(
+                                            Song(
+                                                id = "itunes_${item.optLong("trackId")}",
+                                                title = trackName,
+                                                artist = item.optString("artistName"),
+                                                albumArt = item.optString("artworkUrl100", "").replace("100x100bb.jpg", "1000x1000bb.jpg"),
+                                                streamUrl = "ghost_track",
+                                                album = item.optString("collectionName"),
+                                                source = "youtube"
+                                            )
+                                        )
+                                    }
+                                }
+                                withContext(Dispatchers.Main) { _albumTracks.addAll(ghostTracks) }
+                            }
+                        }
+                    }
+                    return@launch
+                }
+
+                // Saavn Fallback
                 val response = RetrofitClient.api.getArtistDetails(id = artistId)
                 if (response.isSuccessful) {
-                    // 🟢 FIXED: Artists put tracks in 'topSongs' or 'songs'
                     val data = response.body()?.data
                     val apiSongs = data?.topSongs ?: data?.songs ?: emptyList()
                     val newSongs = apiSongs.mapNotNull {
                         val url = it.downloadUrl.lastOrNull()?.url ?: return@mapNotNull null
                         Song(
-                            id = it.id,
-                            title = it.name,
-                            artist = it.artists.primary.firstOrNull()?.name ?: "Unknown",
-                            albumArt = it.image.lastOrNull()?.url ?: "",
-                            streamUrl = url,
-                            album = it.album?.name ?: "",
-                            source = "saavn"
+                            id = it.id, title = it.name, artist = it.artists.primary.firstOrNull()?.name ?: "Unknown",
+                            albumArt = it.image.lastOrNull()?.url ?: "", streamUrl = url, album = it.album?.name ?: "", source = "saavn"
                         )
                     }
                     _albumTracks.addAll(newSongs)
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            } finally {
-                isAlbumLoading.value = false
-            }
+            } catch (e: Exception) { e.printStackTrace() }
+            finally { isAlbumLoading.value = false }
         }
     }
 

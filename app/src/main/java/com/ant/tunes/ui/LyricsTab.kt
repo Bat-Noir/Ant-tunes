@@ -4,6 +4,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
+import androidx.compose.foundation.lazy.itemsIndexed // 🟢 Ensures itemsIndexed works perfectly
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -25,7 +26,8 @@ fun LyricsTab(
     isLoading: Boolean,
     lrcLines: List<PlayerViewModel.LrcLine> = emptyList(),
     isFullScreen: Boolean = false,
-    onToggleFullScreen: () -> Unit = {}
+    onToggleFullScreen: () -> Unit = {},
+    onRetry: () -> Unit = {} // 🟢 ADDED: Command to retry fetching
 ) {
     val accent = LocalAccentColor.current
     val position by PlayerManager.currentPosition.collectAsState()
@@ -40,8 +42,8 @@ fun LyricsTab(
         }
     }
 
-    // Auto-scroll to current line
-    LaunchedEffect(currentLineIndex) {
+    // 🟢 FIXED: Added 'lrcLines' so it instantly re-syncs when you skip a song!
+    LaunchedEffect(currentLineIndex, lrcLines) {
         if (currentLineIndex >= 0 && lrcLines.isNotEmpty()) {
             listState.animateScrollToItem(
                 index = (currentLineIndex - 2).coerceAtLeast(0),
@@ -87,9 +89,12 @@ fun LyricsTab(
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
+                        // 🟢 FIXED: Replaced 'horizontal' with 'start' and 'end'
                         contentPadding = PaddingValues(
-                            horizontal = 16.dp,
-                            vertical = 80.dp
+                            start = 16.dp,
+                            top = 60.dp,
+                            end = 16.dp,
+                            bottom = 140.dp
                         ),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
@@ -135,35 +140,10 @@ fun LyricsTab(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .scale(scale)
-                                    .animateItem()
+                                    .animateItem() // Keeping your exact animation
                             )
                         }
                     }
-
-                    // Fade top
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(80.dp)
-                            .align(Alignment.TopCenter)
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(AntBlack, Color.Transparent)
-                                )
-                            )
-                    )
-                    // Fade bottom
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(80.dp)
-                            .align(Alignment.BottomCenter)
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(Color.Transparent, AntBlack)
-                                )
-                            )
-                    )
 
                     // Fullscreen toggle button
                     IconButton(
@@ -173,7 +153,7 @@ fun LyricsTab(
                             .padding(8.dp)
                             .size(36.dp)
                             .background(
-                                AntSurface1,
+                                AntSurface1.copy(alpha = 0.5f), // 🟢 Transparent backing
                                 RoundedCornerShape(10.dp)
                             )
                             .border(
@@ -200,9 +180,12 @@ fun LyricsTab(
                         modifier = Modifier
                             .fillMaxSize()
                             .verticalScroll(scrollState)
+                            // 🟢 FIXED: Replaced 'horizontal' with 'start' and 'end'
                             .padding(
-                                horizontal = 16.dp,
-                                vertical = 40.dp
+                                start = 16.dp,
+                                top = 40.dp,
+                                end = 16.dp,
+                                bottom = 140.dp
                             ),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
@@ -222,18 +205,7 @@ fun LyricsTab(
                             }
                         }
                     }
-                    // Fade bottom
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(60.dp)
-                            .align(Alignment.BottomCenter)
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(Color.Transparent, AntBlack)
-                                )
-                            )
-                    )
+
                     // Fullscreen toggle
                     IconButton(
                         onClick = onToggleFullScreen,
@@ -241,7 +213,7 @@ fun LyricsTab(
                             .align(Alignment.TopEnd)
                             .padding(8.dp)
                             .size(36.dp)
-                            .background(AntSurface1, RoundedCornerShape(10.dp))
+                            .background(AntSurface1.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
                             .border(1.dp, AntGlassBorder, RoundedCornerShape(10.dp))
                     ) {
                         Icon(
@@ -256,7 +228,7 @@ fun LyricsTab(
             }
 
             else -> {
-                // ── EMPTY STATE ──
+                // ── EMPTY STATE WITH RETRY ──
                 Column(
                     modifier = Modifier.fillMaxSize(),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -274,6 +246,20 @@ fun LyricsTab(
                         style = MaterialTheme.typography.bodySmall,
                         color = AntText3,
                         textAlign = TextAlign.Center)
+
+                    Spacer(Modifier.height(24.dp))
+
+                    // 🟢 UI FIX: The Retry Button
+                    Button(
+                        onClick = onRetry,
+                        colors = ButtonDefaults.buttonColors(containerColor = AntSurface1),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.border(1.dp, AntGlassBorder, RoundedCornerShape(12.dp))
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Retry", tint = accent, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Retry", color = accent, style = MaterialTheme.typography.labelMedium)
+                    }
                 }
             }
         }

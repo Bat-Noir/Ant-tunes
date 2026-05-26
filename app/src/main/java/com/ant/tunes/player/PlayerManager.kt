@@ -563,23 +563,47 @@ object PlayerManager {
         CoroutineScope(Dispatchers.IO).launch {
             val resolvedItems = songs.mapIndexed { i, song ->
                 async {
-                    val url = PlaybackRepository.getFreshStreamUrl(context, song)
-                        ?: song.streamUrl
-                    i to url
+                    var url = PlaybackRepository.getFreshStreamUrl(context, song) ?: song.streamUrl
+
+                    // 🟢 THE STEALTH INTERCEPTOR
+                    if (url == "ghost_track") {
+                        url = resolveGhostTrack(song.title, song.artist)
+                    }
+
+                    // 🟢 FETCH RAW 4K ARTWORK
+                    val rawArt = fetchAndCropArtwork(context, song.albumArt)
+                    Triple(i, url, rawArt)
                 }
             }.awaitAll().sortedBy { it.first }
 
-            val mediaItems = resolvedItems.mapIndexed { i, (_, url) ->
+            val mediaItems = resolvedItems.mapIndexed { i, (_, url, rawArtBytes) ->
                 val song = songs[i]
+
+                // 🟢 INJECT METADATA
+                val metadata = androidx.media3.common.MediaMetadata.Builder()
+                    .setTitle(song.title)
+                    .setArtist(song.artist)
+                    .setAlbumTitle(song.album)
+                    .apply {
+                        if (rawArtBytes != null) {
+                            setArtworkData(rawArtBytes, androidx.media3.common.MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+                        } else {
+                            setArtworkUri(android.net.Uri.parse(song.albumArt)) // Fallback
+                        }
+                    }
+                    .build()
+
                 when (song.resolvedSourceType()) {
                     SourceType.GAANA -> MediaItem.Builder()
                         .setUri(url)
                         .setCustomCacheKey(song.id)
                         .setMimeType("application/x-mpegURL")
+                        .setMediaMetadata(metadata)
                         .build()
                     else -> MediaItem.Builder()
                         .setUri(url)
                         .setCustomCacheKey(song.id)
+                        .setMediaMetadata(metadata)
                         .build()
                 }
             }
@@ -612,14 +636,26 @@ object PlayerManager {
         playlist = playlist + filtered
         _playlistFlow.value = playlist
 
-        val mediaItems = filtered.map { song ->
-            when (song.source) {
-                "gaana" -> MediaItem.Builder().setUri(song.streamUrl).setCustomCacheKey(song.id).setMimeType("application/x-mpegURL").build()
-                else -> MediaItem.Builder().setUri(song.streamUrl).setCustomCacheKey(song.id).build()
+        // 🟢 SAFELY RESOLVE GHOST TRACKS BEFORE QUEUEING
+        CoroutineScope(Dispatchers.IO).launch {
+            val mediaItems = filtered.map { song ->
+                async {
+                    var url = song.streamUrl
+                    if (url == "ghost_track") {
+                        url = resolveGhostTrack(song.title, song.artist)
+                    }
+
+                    when (song.source) {
+                        "gaana" -> MediaItem.Builder().setUri(url).setCustomCacheKey(song.id).setMimeType("application/x-mpegURL").build()
+                        else -> MediaItem.Builder().setUri(url).setCustomCacheKey(song.id).build()
+                    }
+                }
+            }.awaitAll()
+
+            withContext(Dispatchers.Main) {
+                player?.addMediaItems(mediaItems)
             }
         }
-
-        player?.addMediaItems(mediaItems)
     }
 
     @OptIn(UnstableApi::class)
@@ -637,7 +673,13 @@ object PlayerManager {
         _playlistFlow.value = playlist
 
         CoroutineScope(Dispatchers.IO).launch {
-            val url = PlaybackRepository.getFreshStreamUrl(context, song) ?: song.streamUrl
+            var url = PlaybackRepository.getFreshStreamUrl(context, song) ?: song.streamUrl
+
+            // 🟢 THE STEALTH INTERCEPTOR
+            if (url == "ghost_track") {
+                url = resolveGhostTrack(song.title, song.artist)
+            }
+
             val mediaItem = when (song.resolvedSourceType()) {
                 SourceType.GAANA -> androidx.media3.common.MediaItem.Builder().setUri(url).setCustomCacheKey(song.id).setMimeType("application/x-mpegURL").build()
                 else -> androidx.media3.common.MediaItem.Builder().setUri(url).setCustomCacheKey(song.id).build()
@@ -665,8 +707,15 @@ object PlayerManager {
         } else context.startService(intent)
 
         CoroutineScope(Dispatchers.IO).launch {
-            val url = PlaybackRepository.getFreshStreamUrl(context, song)
-                ?: song.streamUrl
+            var url = PlaybackRepository.getFreshStreamUrl(context, song) ?: song.streamUrl
+
+            // 🟢 THE STEALTH INTERCEPTOR
+            if (url == "ghost_track") {
+                url = resolveGhostTrack(song.title, song.artist)
+            }
+
+            // 🟢 FETCH RAW 4K ARTWORK
+            val rawArtBytes = fetchAndCropArtwork(context, song.albumArt)
 
             withContext(Dispatchers.Main) {
                 if (song.isDownloaded) {
@@ -678,15 +727,31 @@ object PlayerManager {
                     _isOfflineMode.value = false
                 }
 
+                // 🟢 INJECT METADATA
+                val metadata = androidx.media3.common.MediaMetadata.Builder()
+                    .setTitle(song.title)
+                    .setArtist(song.artist)
+                    .setAlbumTitle(song.album)
+                    .apply {
+                        if (rawArtBytes != null) {
+                            setArtworkData(rawArtBytes, androidx.media3.common.MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+                        } else {
+                            setArtworkUri(android.net.Uri.parse(song.albumArt)) // Fallback
+                        }
+                    }
+                    .build()
+
                 val mediaItem = when (song.resolvedSourceType()) {
                     SourceType.GAANA -> MediaItem.Builder()
                         .setUri(url)
                         .setCustomCacheKey(song.id)
                         .setMimeType("application/x-mpegURL")
+                        .setMediaMetadata(metadata) // Inject!
                         .build()
                     else -> MediaItem.Builder()
                         .setUri(url)
                         .setCustomCacheKey(song.id)
+                        .setMediaMetadata(metadata) // Inject!
                         .build()
                 }
 
@@ -696,6 +761,24 @@ object PlayerManager {
             }
         }
     }
+
+    // ═══════════════════════════════════════
+    // 🟢 STEALTH GHOST RESOLVER
+    // ═══════════════════════════════════════
+    // Turns iTunes metadata into a playable YouTube Audio stream!
+    private suspend fun resolveGhostTrack(title: String, artist: String): String {
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val query = "$title $artist audio"
+                val results = com.ant.tunes.NewPipeHelper.search(query)
+                val firstResult = results.firstOrNull() ?: return@withContext ""
+                com.ant.tunes.NewPipeHelper.getAudioUrl(firstResult.streamUrl) ?: ""
+            } catch (e: Exception) {
+                ""
+            }
+        }
+    }
+
 
     fun togglePlayPause() {
         player?.let {
@@ -787,6 +870,71 @@ object PlayerManager {
                     _duration.value = maxOf(0L, exoPlayer.duration)
                 }
                 delay(500)
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════
+    // 🟢 TASK 6.5 v2: THE SMART 4K INJECTOR
+    // ═══════════════════════════════════════
+    private suspend fun fetchAndCropArtwork(context: Context, originalUrl: String): ByteArray? {
+        if (originalUrl.isBlank()) return null
+        return withContext(Dispatchers.IO) {
+            try {
+                // 🔥 THE ULTIMATE FALLBACK: Upgrade URLs if iTunes missed them
+                var url = originalUrl
+
+                // If it's a native Saavn image, force it to 500x500
+                if (url.contains("150x150")) url = url.replace("150x150", "500x500")
+
+                // If it's YouTube, aggressively demand the true 1280x720 HD thumbnail
+                if (url.contains("youtube.com") || url.contains("i.ytimg.com")) {
+                    url = url.replace("hqdefault.jpg", "maxresdefault.jpg")
+                        .replace("default.jpg", "maxresdefault.jpg")
+                }
+
+                val loader = coil.ImageLoader(context)
+                val request = coil.request.ImageRequest.Builder(context)
+                    .data(url)
+                    .allowHardware(false) // Keep it in software so we can extract raw bytes
+                    .build()
+
+                var result = loader.execute(request)
+
+                // 🟢 SAFENET: Some obscure YouTube videos don't have 4K thumbs.
+                // If 'maxresdefault' 404s, safely fall back to 'hqdefault' so we don't crash.
+                if (result is coil.request.ErrorResult && url.contains("maxresdefault.jpg")) {
+                    val fallbackUrl = url.replace("maxresdefault.jpg", "hqdefault.jpg")
+                    val fallbackReq = request.newBuilder().data(fallbackUrl).build()
+                    result = loader.execute(fallbackReq)
+                }
+
+                if (result is coil.request.SuccessResult) {
+                    val originalBitmap = (result.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                    if (originalBitmap != null) {
+                        // 🔥 MATHEMATICAL CROP: Perfectly center-crop a 16:9 image to 1:1
+                        // WITHOUT forcibly stretching or blurring it!
+                        val width = originalBitmap.width
+                        val height = originalBitmap.height
+
+                        val squareBitmap = if (width > height) {
+                            val startX = (width - height) / 2
+                            android.graphics.Bitmap.createBitmap(originalBitmap, startX, 0, height, height)
+                        } else if (height > width) {
+                            val startY = (height - width) / 2
+                            android.graphics.Bitmap.createBitmap(originalBitmap, 0, startY, width, width)
+                        } else {
+                            originalBitmap
+                        }
+
+                        val stream = java.io.ByteArrayOutputStream()
+                        squareBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, stream)
+                        return@withContext stream.toByteArray()
+                    }
+                }
+                null
+            } catch (e: Exception) {
+                null
             }
         }
     }

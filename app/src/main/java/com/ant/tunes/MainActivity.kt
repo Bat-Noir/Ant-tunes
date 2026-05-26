@@ -22,6 +22,10 @@ import com.ant.tunes.ui.theme.AntBlack
 import com.ant.tunes.ui.theme.AntTunesTheme
 import com.ant.tunes.viewmodel.PlayerViewModel
 import kotlinx.coroutines.launch
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -87,14 +91,25 @@ fun AntTunesApp() {
         }
     }
 
-    // 🟢 Jumps to HOME Tab immediately so the Player can expand
+    // 🟢 FIXED: No longer forces the Home tab! Just expands the player globally.
     LaunchedEffect(RequestFullScreenPlayer) {
         if (RequestFullScreenPlayer) {
-            currentTab = NavTab.HOME
+            vm.isPlayerExpanded.value = true
+            RequestFullScreenPlayer = false
         }
     }
 
     val isPlayerExpanded by vm.isPlayerExpanded
+
+    // 🟢 NEW: Global animation state for the player overlay
+    val expandAnim by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (isPlayerExpanded) 1f else 0f,
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+            stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+        ), label = "expand"
+    )
+
     // 🟢 ADDED: We need isPlaying for the global MiniPlayer
     val isPlaying by PlayerManager.isPlayingFlow.collectAsState()
 
@@ -120,8 +135,7 @@ fun AntTunesApp() {
     if (showProfile) {
         ProfileScreen(
             userName = userName.ifEmpty { "Listener" },
-            onClose = { showProfile = false },
-            onOpenSettings = { showProfile = false; showSettings = true }
+            onClose = { showProfile = false }
         )
         return
     }
@@ -134,15 +148,17 @@ fun AntTunesApp() {
         AmbientBlobs()
 
         Box(
-            modifier = Modifier.fillMaxSize() // 🟢 FIXED: Let it fill the whole screen!
+            modifier = Modifier.fillMaxSize()
         ) {
             when (currentTab) {
-                NavTab.HOME    -> PlayerScreen(onOpenProfile = { showProfile = true })
+                NavTab.HOME    -> PlayerScreen(
+                    onOpenProfile = { showProfile = true },
+                    onOpenSettings = { showSettings = true }
+                )
                 NavTab.SEARCH  -> SearchScreen(vm)
                 NavTab.LIBRARY -> LibraryScreen(vm)
             }
         }
-
 
         // 🟢 Hides Navs when Player is expanded, Search UI is active, OR a Library/Home sub-screen is open
         val hideBottomNav = isPlayerExpanded ||
@@ -150,8 +166,7 @@ fun AntTunesApp() {
                 (currentTab == NavTab.LIBRARY && com.ant.tunes.ui.IsLibrarySubScreenActive) ||
                 (currentTab == NavTab.HOME && com.ant.tunes.ui.IsHomeSubScreenActive)
 
-        // 🟢 FIXED: ONE single AnimatedVisibility block controls BOTH the Mini Player and the Bottom Nav.
-        // They are glued together and will slide up and down flawlessly as a single unit.
+        // 🟢 THE MINI PLAYER AND BOTTOM NAV
         androidx.compose.animation.AnimatedVisibility(
             visible = !hideBottomNav,
             enter = androidx.compose.animation.slideInVertically { it },
@@ -171,8 +186,8 @@ fun AntTunesApp() {
                         .padding(horizontal = 16.dp)
                         .padding(bottom = 8.dp),
                     onClick = {
-                        currentTab = NavTab.HOME
-                        RequestFullScreenPlayer = true
+                        // 🟢 FIXED: Just expand the player globally!
+                        vm.isPlayerExpanded.value = true
                     },
                     isPlaying = isPlaying
                 )
@@ -182,6 +197,30 @@ fun AntTunesApp() {
                     selected = currentTab,
                     onSelect = { currentTab = it },
                     modifier = Modifier.padding(bottom = 7.dp)
+                )
+            }
+        }
+
+        // ═══════════════════════════════════════
+        // 🟢 THE GLOBAL FULL PLAYER OVERLAY
+        // ═══════════════════════════════════════
+        // This sits above EVERYTHING and slides up seamlessly from any tab!
+        if (expandAnim > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(expandAnim) // 🟢 Cleaned up!
+                    .graphicsLayer { translationY = (1f - expandAnim) * 800f } // 🟢 Cleaned up!
+                    .background(AntBlack)
+                    .pointerInput(Unit) { // 🟢 Cleaned up!
+                        detectVerticalDragGestures { _, dragAmount ->
+                            if (dragAmount > 30f) vm.isPlayerExpanded.value = false
+                        }
+                    }
+            ) {
+                com.ant.tunes.ui.FullPlayer(
+                    isPlaying = isPlaying,
+                    onCollapse = { vm.isPlayerExpanded.value = false }
                 )
             }
         }

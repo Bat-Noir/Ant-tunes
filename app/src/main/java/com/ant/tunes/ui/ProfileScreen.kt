@@ -28,7 +28,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -76,8 +75,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun ProfileScreen(
     userName: String, // Fallback if not set in prefs
-    onClose: () -> Unit,
-    onOpenSettings: () -> Unit
+    onClose: () -> Unit
 ) {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("ant_prefs", Context.MODE_PRIVATE)
@@ -197,15 +195,10 @@ fun ProfileScreen(
                     Icon(Icons.Default.Close, null, tint = AntText, modifier = Modifier.size(18.dp))
                 }
                 Text("PROFILE", style = MaterialTheme.typography.labelLarge, color = AntText3)
-                IconButton(
-                    onClick = onOpenSettings,
-                    modifier = Modifier.size(40.dp).background(AntSurface1, CircleShape).border(1.dp, AntGlassBorder, CircleShape)
-                ) {
-                    Icon(Icons.Default.Settings, null, tint = AntText, modifier = Modifier.size(18.dp))
-                }
-            }
 
-            Spacer(Modifier.height(32.dp))
+                // 🟢 REMOVED: Settings button is now on HomeScreen!
+                Spacer(modifier = Modifier.size(40.dp)) // Keeps the title centered
+            }
 
             // ── CUSTOM AVATAR ──
             Box(

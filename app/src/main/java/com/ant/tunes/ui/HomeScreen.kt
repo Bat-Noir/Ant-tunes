@@ -21,6 +21,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings // 🟢 ADD THIS
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -53,6 +55,7 @@ fun HomeScreen(
     recommendedSongs: List<Song>,
     onMiniPlayerClick: () -> Unit,
     onOpenProfile: () -> Unit = {},
+    onOpenSettings: () -> Unit = {}, // 🟢 ADD THIS LINE
     showCache: Boolean,
     onShowCacheChange: (Boolean) -> Unit
 ) {
@@ -252,7 +255,11 @@ fun HomeScreen(
                                 Spacer(Modifier.width(8.dp))
                                 Text("ANT TUNES", style = MaterialTheme.typography.labelLarge, color = AntText3)
                             }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            // 🟢 FIXED: Used spacedBy(12.dp) for perfect, even gaps
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
                                 IconButton(
                                     onClick = {
                                         refreshRotation += 360f
@@ -263,7 +270,15 @@ fun HomeScreen(
                                 ) {
                                     Icon(Icons.Default.Refresh, "Refresh", tint = accent, modifier = Modifier.rotate(animatedRefresh))
                                 }
-                                Spacer(Modifier.width(8.dp))
+
+                                IconButton(
+                                    onClick = { onOpenSettings() },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    // 🟢 FIXED: Changed tint to 'accent' instead of 'AntText3'
+                                    Icon(Icons.Default.Settings, "Settings", tint = accent)
+                                }
+
                                 IconButton(
                                     onClick = { onOpenProfile() },
                                     modifier = Modifier.size(36.dp).clip(CircleShape).border(1.dp, accent.copy(alpha = 0.4f), CircleShape)
