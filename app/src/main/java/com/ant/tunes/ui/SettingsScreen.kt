@@ -2,7 +2,12 @@ package com.ant.tunes.ui
 
 import android.content.Context
 import android.widget.Toast
+import androidx.activity.compose.BackHandler // 🟢 NEW IMPORT
 import androidx.annotation.OptIn
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import com.ant.tunes.R // Replace with your actual package path if different
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -45,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -71,19 +77,17 @@ fun SettingsScreen(onClose: () -> Unit) {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("ant_prefs", Context.MODE_PRIVATE)
 
-    // 🟢 FIXED: Default color changed to Crimson Red (#DC143C)
+    // 🟢 INTERCEPT THE SYSTEM BACK BUTTON
+    BackHandler {
+        onClose()
+    }
+
     var selectedColorInt by remember { mutableIntStateOf(prefs.getInt("accent_color", android.graphics.Color.parseColor("#DC143C"))) }
     val activeAccent = Color(selectedColorInt)
 
     var gapless by remember { mutableStateOf(prefs.getBoolean("gapless_playback", false)) }
-
-    // 🟢 Audio States
-
-
-    // 🟢 FIXED: Smart Cache default is now off (false)
     var cacheEnabled by remember { mutableStateOf(prefs.getBoolean("cache_enabled", false)) }
     var cacheLimitMB by remember { mutableFloatStateOf(prefs.getInt("cache_limit_mb", 500).toFloat()) }
-
     var stealthMode by remember { mutableStateOf(prefs.getBoolean("stealth", false)) }
     val scrollState = rememberScrollState()
 
@@ -145,13 +149,11 @@ fun SettingsScreen(onClose: () -> Unit) {
 
                 HorizontalDivider(color = AntGlassBorder, thickness = 1.dp)
 
-                // 🟢 SMART CACHING TOGGLE
                 SettingsToggleRow("Smart Caching", "Automatically cache songs for offline playback", cacheEnabled, activeAccent) {
                     cacheEnabled = it
                     prefs.edit().putBoolean("cache_enabled", it).apply()
                 }
 
-                // 🟢 CACHE LIMIT SLIDER (Appears only if caching is enabled)
                 if (cacheEnabled) {
                     HorizontalDivider(color = AntGlassBorder, thickness = 1.dp)
                     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp)) {
@@ -192,7 +194,7 @@ fun SettingsScreen(onClose: () -> Unit) {
             Spacer(modifier = Modifier.height(32.dp))
 
             // ── 5. ABOUT ──
-            Text("ABOUT", style = MaterialTheme.typography.labelLarge, color = AntText3)
+            Text("ABOUT", style = MaterialTheme.typography.labelLarge, color = AntText3, modifier = Modifier.padding(horizontal = 24.dp))
             Spacer(modifier = Modifier.height(16.dp))
             SettingsPanel {
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp)) {
@@ -211,13 +213,48 @@ fun SettingsScreen(onClose: () -> Unit) {
                 ) {
                     Text("Clear Cache", style = MaterialTheme.typography.titleMedium, color = Color(0xFFFF4444))
                 }
-
             }
 
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // ── CONTACT & FEEDBACK (Perfectly aligned) ──
+            Text("CONTACT & FEEDBACK", style = MaterialTheme.typography.labelLarge, color = AntText3, modifier = Modifier.padding(horizontal = 24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            val uriHandler = LocalUriHandler.current
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                // GITHUB
+                IconButton(
+                    onClick = { uriHandler.openUri("https://github.com/Bat-Noir/Ant-tunes") },
+                    modifier = Modifier.size(56.dp).clip(CircleShape).background(AntSurface1).border(1.dp, AntGlassBorder, CircleShape)
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_github),
+                        contentDescription = "GitHub",
+                        modifier = Modifier.size(24.dp),
+                        colorFilter = ColorFilter.tint(Color.White) // 🟢 Forces Icon to White
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(24.dp))
+
+                // REDDIT
+                IconButton(
+                    onClick = { uriHandler.openUri("https://reddit.com/u/Bat-Noir") },
+                    modifier = Modifier.size(56.dp).clip(CircleShape).background(AntSurface1).border(1.dp, AntGlassBorder, CircleShape)
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_reddit),
+                        contentDescription = "Reddit",
+                        modifier = Modifier.size(24.dp),
+                        colorFilter = ColorFilter.tint(Color.White) // 🟢 Forces Icon to White
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(48.dp))
+                }
+            }
         }
-    }
-}
 
 @Composable
 fun SettingsPanel(content: @Composable ColumnScope.() -> Unit) {

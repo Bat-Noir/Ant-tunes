@@ -134,7 +134,7 @@ fun ArtistScreen(
                         }
 
                         isFollowed = !isFollowed
-                        com.ant.tunes.player.AppDataManager.saveArtists(context, globalFollowedArtists)
+                        com.ant.tunes.player.AppDataManager.saveFollowedArtists(context, globalFollowedArtists)
                         Toast.makeText(context, if(isFollowed) "Following ${artist.title}" else "Unfollowed", Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.weight(1f).height(48.dp),

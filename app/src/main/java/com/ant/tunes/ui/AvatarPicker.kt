@@ -25,26 +25,25 @@ import java.io.File
 
 // Built-in chibi avatars using emoji (no image files needed)
 val CHIBI_AVATARS = listOf(
-    "🕷️" to "Spider-Man",
-    "🦸" to "Iron Man",
-    "🛡️" to "Captain America",
-    "🦇" to "Batman",
+    "🕷️" to "Spider",
+    "🛡️" to "Shield",
+    "🦇" to "Bat",
     "🦸‍♂️" to "Superman",
-    "⚡" to "Thor",
-    "💚" to "Hulk",
-    "🐱" to "Catwoman",
-    "💫" to "Supergirl",
-    "🕸️" to "Black Widow",
-    "🔴" to "Scarlet Witch",
-    "🐉" to "Goku",
+    "⚡" to "Thunder",
+    "💚" to "Green Heart",
+    "🐱" to "Cat",
+    "💫" to "Shooting Star",
+    "🕸️" to "Web",
+    "🔴" to "Red Dot",
+    "🐉" to "Dragon",
     "🍥" to "Naruto",
-    "🏴‍☠️" to "Luffy",
-    "⚔️" to "Ichigo",
-    "🌸" to "Chichi",
-    "💜" to "Hinata",
-    "🌺" to "Orihime",
-    "👑" to "Hancock"
-)
+    "🏴‍☠️" to "Pirate Flag",
+    "⚔️" to "Swords",
+    "🌸" to "Flower1",
+    "💜" to "Purple Heart",
+    "🌺" to "Flower2",
+    "👑" to "Crown"
+).distinctBy { it.second } // 🟢 Kills any duplicate names instantly!
 
 object AvatarManager {
     private const val KEY_AVATAR_TYPE = "avatar_type" // "custom" | "chibi" | "initials"
@@ -115,8 +114,7 @@ fun AvatarDisplay(
                 androidx.compose.ui.graphics.Brush.radialGradient(
                     listOf(accent.copy(0.3f), AntBlack)
                 )
-            )
-            ,
+            ),
         contentAlignment = Alignment.Center
     ) {
         when (avatarType) {
@@ -193,14 +191,11 @@ fun AvatarPickerSheet(
                     Triple(Icons.Default.PhotoCamera, "Upload Photo", "From gallery") to {
                         photoPicker.launch("image/*")
                     },
-                    Triple(Icons.Default.EmojiEmotions, "Chibi Avatars", "Anime & heroes") to {
+                    // 🟢 FIXED: "Chibi Avatars" renamed to "Emojis", and subtitle removed
+                    Triple(Icons.Default.EmojiEmotions, "Emojis", "") to {
                         showChibiGrid = true
                     },
-                    Triple(Icons.Default.PersonOutline, "Use Initials", "Default style") to {
-                        AvatarManager.removeAvatar(context)
-                        onAvatarChanged()
-                        onDismiss()
-                    },
+                    // 🟢 FIXED: "Use Initials" completely removed
                     Triple(Icons.Default.Delete, "Remove Photo", "Reset to initials") to {
                         AvatarManager.removeAvatar(context)
                         onAvatarChanged()
@@ -223,17 +218,15 @@ fun AvatarPickerSheet(
                                 .background(AntSurface2),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(icon, null, tint = accent,
-                                modifier = Modifier.size(20.dp))
+                            Icon(icon, null, tint = accent, modifier = Modifier.size(20.dp))
                         }
                         Spacer(Modifier.width(14.dp))
                         Column {
-                            Text(title,
-                                style = MaterialTheme.typography.titleSmall,
-                                color = AntText)
-                            Text(subtitle,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = AntText3)
+                            Text(title, style = MaterialTheme.typography.titleSmall, color = AntText)
+                            // 🟢 FIXED: Dynamically hides the subtitle text completely if it's blank
+                            if (subtitle.isNotEmpty()) {
+                                Text(subtitle, style = MaterialTheme.typography.labelSmall, color = AntText3)
+                            }
                         }
                     }
                     Spacer(Modifier.height(4.dp))
@@ -248,13 +241,9 @@ fun AvatarPickerSheet(
                         onClick = { showChibiGrid = false },
                         modifier = Modifier.size(32.dp)
                     ) {
-                        Icon(Icons.Default.ArrowBack, null,
-                            tint = AntText2)
+                        Icon(Icons.Default.ArrowBack, null, tint = AntText2)
                     }
-                    Spacer(Modifier.width(8.dp))
-                    Text("PICK AVATAR",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = AntText3)
+                    // 🟢 FIXED: Removed the secondary "PICK AVATAR" heading next to the back button!
                 }
 
                 LazyVerticalGrid(
@@ -280,8 +269,7 @@ fun AvatarPickerSheet(
                                     .border(1.dp, AntGlassBorder, CircleShape),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(emoji,
-                                    style = MaterialTheme.typography.titleMedium)
+                                Text(emoji, style = MaterialTheme.typography.titleMedium)
                             }
                             Spacer(Modifier.height(4.dp))
                             Text(name,

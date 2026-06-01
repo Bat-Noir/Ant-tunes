@@ -532,7 +532,6 @@ fun SearchScreen(vm: com.ant.tunes.viewmodel.PlayerViewModel = viewModel()) {
                     }
                 }
             }
-
         }
     }
 }

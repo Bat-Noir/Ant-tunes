@@ -1,5 +1,6 @@
 package com.ant.tunes.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,10 +28,12 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.RemoveCircle
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -40,10 +43,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -60,6 +68,7 @@ import com.ant.tunes.player.PlayerManager
 import com.ant.tunes.ui.theme.AntBlack
 import com.ant.tunes.ui.theme.AntGlassBorder
 import com.ant.tunes.ui.theme.AntGlassBorderHot
+import com.ant.tunes.ui.theme.AntSurface1
 import com.ant.tunes.ui.theme.AntSurface2
 import com.ant.tunes.ui.theme.AntText
 import com.ant.tunes.ui.theme.AntText2
@@ -69,9 +78,18 @@ import com.ant.tunes.ui.theme.LocalAccentColor
 @Composable
 fun LikedSongsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    val songs = globalLikedSongs
     val accent = LocalAccentColor.current
     val currentSong by PlayerManager.currentSong.collectAsState()
+
+    // 🟢 SEARCH STATES
+    var isSearchActive by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+
+    val songs = if (searchQuery.isBlank()) {
+        globalLikedSongs
+    } else {
+        globalLikedSongs.filter { it.title.contains(searchQuery, true) || it.artist.contains(searchQuery, true) }
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(AntBlack)) {
         Box(modifier = Modifier.size(300.dp).offset(x = (-50).dp, y = (-80).dp).blur(80.dp).background(Brush.radialGradient(listOf(accent.copy(alpha = 0.15f), Color.Transparent)), CircleShape))
@@ -87,7 +105,7 @@ fun LikedSongsScreen(onBack: () -> Unit) {
                 Spacer(Modifier.height(32.dp))
                 Text("LIKED SONGS", style = MaterialTheme.typography.displayLarge, color = AntText, modifier = Modifier.padding(horizontal = 20.dp))
                 Spacer(Modifier.height(4.dp))
-                Text("${songs.size} TRACKS", style = MaterialTheme.typography.labelLarge, color = accent, modifier = Modifier.padding(horizontal = 20.dp))
+                Text("${globalLikedSongs.size} TRACKS", style = MaterialTheme.typography.labelLarge, color = accent, modifier = Modifier.padding(horizontal = 20.dp))
                 Spacer(Modifier.height(24.dp))
             }
 
@@ -97,7 +115,7 @@ fun LikedSongsScreen(onBack: () -> Unit) {
                         onClick = {
                             if (songs.isNotEmpty()) {
                                 PlayerManager.play(context, songs, 0)
-                                RequestFullScreenPlayer = true // 🟢 Instant Play Fullscreen
+                                RequestFullScreenPlayer = true
                             }
                         },
                         modifier = Modifier.weight(1f).height(48.dp),
@@ -112,7 +130,7 @@ fun LikedSongsScreen(onBack: () -> Unit) {
                         onClick = {
                             if (songs.isNotEmpty()) {
                                 PlayerManager.play(context, songs.shuffled(), 0)
-                                RequestFullScreenPlayer = true // 🟢 Instant Play Fullscreen
+                                RequestFullScreenPlayer = true
                             }
                         },
                         modifier = Modifier.weight(1f).height(48.dp),
@@ -128,9 +146,13 @@ fun LikedSongsScreen(onBack: () -> Unit) {
                 Spacer(Modifier.height(28.dp))
             }
 
-            if (songs.isEmpty()) {
+            if (songs.isEmpty() && searchQuery.isBlank()) {
                 item {
                     Text("No liked songs yet. Tap the heart icon in the player!", color = AntText3, modifier = Modifier.padding(horizontal = 20.dp, vertical = 40.dp))
+                }
+            } else if (songs.isEmpty() && searchQuery.isNotBlank()) {
+                item {
+                    Text("No songs found matching '$searchQuery'", color = AntText3, modifier = Modifier.padding(horizontal = 20.dp, vertical = 40.dp))
                 }
             } else {
                 itemsIndexed(songs) { index, song ->
@@ -138,7 +160,7 @@ fun LikedSongsScreen(onBack: () -> Unit) {
                     Row(
                         modifier = Modifier.fillMaxWidth().background(if (isCurrent) accent.copy(alpha = 0.08f) else Color.Transparent).clickable {
                             PlayerManager.play(context, songs, index)
-                            RequestFullScreenPlayer = true // 🟢 Instant Play Fullscreen
+                            RequestFullScreenPlayer = true
                         }.padding(horizontal = 20.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -159,8 +181,42 @@ fun LikedSongsScreen(onBack: () -> Unit) {
             }
         }
 
-        IconButton(onClick = onBack, modifier = Modifier.padding(16.dp).statusBarsPadding().size(40.dp).background(AntSurface2, CircleShape).border(1.dp, AntGlassBorder, CircleShape).align(Alignment.TopStart)) {
-            Icon(Icons.Default.ArrowBack, null, tint = AntText, modifier = Modifier.size(20.dp))
+        // 🟢 EXPANDING TOP BAR (Liked Songs)
+        Row(
+            modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack, modifier = Modifier.size(40.dp).background(AntSurface2, CircleShape).border(1.dp, AntGlassBorder, CircleShape)) {
+                Icon(Icons.Default.ArrowBack, null, tint = AntText, modifier = Modifier.size(20.dp))
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            AnimatedVisibility(visible = isSearchActive, modifier = Modifier.weight(1f)) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Search liked...", color = AntText3, style = MaterialTheme.typography.labelMedium) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = accent, unfocusedBorderColor = AntGlassBorder,
+                        focusedTextColor = AntText, unfocusedTextColor = AntText,
+                        focusedContainerColor = AntSurface1, unfocusedContainerColor = AntSurface1
+                    ),
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.height(50.dp)
+                )
+            }
+
+            if (!isSearchActive) Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.width(12.dp))
+
+            IconButton(onClick = {
+                isSearchActive = !isSearchActive
+                if (!isSearchActive) searchQuery = ""
+            }, modifier = Modifier.size(40.dp).background(AntSurface2, CircleShape).border(1.dp, AntGlassBorder, CircleShape)) {
+                Icon(if (isSearchActive) Icons.Default.Close else Icons.Default.Search, null, tint = AntText, modifier = Modifier.size(20.dp))
+            }
         }
     }
 }
@@ -176,6 +232,16 @@ fun PlaylistDetailScreen(playlistId: String, onBack: () -> Unit) {
     if (playlist == null) {
         onBack()
         return
+    }
+
+    // 🟢 SEARCH STATES
+    var isSearchActive by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+
+    val filteredTracks = if (searchQuery.isBlank()) {
+        playlist.tracks
+    } else {
+        playlist.tracks.filter { it.title.contains(searchQuery, true) || it.artist.contains(searchQuery, true) }
     }
 
     Box(modifier = Modifier.fillMaxSize().background(AntBlack)) {
@@ -200,9 +266,9 @@ fun PlaylistDetailScreen(playlistId: String, onBack: () -> Unit) {
                 Row(modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
                         onClick = {
-                            if (playlist.tracks.isNotEmpty()) {
-                                PlayerManager.play(context, playlist.tracks, 0)
-                                RequestFullScreenPlayer = true // 🟢 Instant Play Fullscreen
+                            if (filteredTracks.isNotEmpty()) {
+                                PlayerManager.play(context, filteredTracks, 0)
+                                RequestFullScreenPlayer = true
                             }
                         },
                         modifier = Modifier.weight(1f).height(48.dp),
@@ -231,12 +297,14 @@ fun PlaylistDetailScreen(playlistId: String, onBack: () -> Unit) {
                 Spacer(Modifier.height(28.dp))
             }
 
-            itemsIndexed(playlist.tracks) { index, song ->
+            itemsIndexed(filteredTracks) { displayIndex, song ->
                 val isCurrent = currentSong?.id == song.id
+                val actualIndex = playlist.tracks.indexOf(song) // 🟢 Track original index for moving/deleting
+
                 Row(
                     modifier = Modifier.fillMaxWidth().background(if (isCurrent) accent.copy(alpha = 0.08f) else Color.Transparent).clickable {
-                        PlayerManager.play(context, playlist.tracks, index)
-                        RequestFullScreenPlayer = true // 🟢 Instant Play Fullscreen pop-up
+                        PlayerManager.play(context, filteredTracks, displayIndex)
+                        RequestFullScreenPlayer = true
                     }.padding(horizontal = 20.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -247,21 +315,28 @@ fun PlaylistDetailScreen(playlistId: String, onBack: () -> Unit) {
                         Text(song.artist, style = MaterialTheme.typography.labelSmall, color = AntText2, maxLines = 1)
                     }
 
-                    if (index > 0) {
-                        IconButton(onClick = {
-                            val item = playlist.tracks.removeAt(index)
-                            playlist.tracks.add(index - 1, item)
-                            AppDataManager.savePlaylists(context, globalPlaylists)
-                        }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.ArrowUpward, null, tint = AntText3, modifier = Modifier.size(20.dp)) }
+                    // 🟢 Hide reorder arrows when searching to prevent bugs!
+                    if (!isSearchActive) {
+                        if (actualIndex > 0) {
+                            IconButton(onClick = {
+                                val item = playlist.tracks.removeAt(actualIndex)
+                                playlist.tracks.add(actualIndex - 1, item)
+                                AppDataManager.savePlaylists(context, globalPlaylists)
+                            }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.ArrowUpward, null, tint = AntText3, modifier = Modifier.size(20.dp)) }
+                        }
+                        if (actualIndex < playlist.tracks.size - 1) {
+                            IconButton(onClick = {
+                                val item = playlist.tracks.removeAt(actualIndex)
+                                playlist.tracks.add(actualIndex + 1, item)
+                                AppDataManager.savePlaylists(context, globalPlaylists)
+                            }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.ArrowDownward, null, tint = AntText3, modifier = Modifier.size(20.dp)) }
+                        }
                     }
-                    if (index < playlist.tracks.size - 1) {
-                        IconButton(onClick = {
-                            val item = playlist.tracks.removeAt(index)
-                            playlist.tracks.add(index + 1, item)
-                            AppDataManager.savePlaylists(context, globalPlaylists)
-                        }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.ArrowDownward, null, tint = AntText3, modifier = Modifier.size(20.dp)) }
-                    }
-                    IconButton(onClick = { playlist.tracks.remove(song) }, modifier = Modifier.size(32.dp)) {
+
+                    IconButton(onClick = {
+                        playlist.tracks.remove(song)
+                        AppDataManager.savePlaylists(context, globalPlaylists)
+                    }, modifier = Modifier.size(32.dp)) {
                         Icon(Icons.Default.RemoveCircle, null, tint = Color(0xFFFF4444).copy(alpha = 0.8f), modifier = Modifier.size(20.dp))
                     }
                 }
@@ -269,8 +344,42 @@ fun PlaylistDetailScreen(playlistId: String, onBack: () -> Unit) {
             }
         }
 
-        IconButton(onClick = onBack, modifier = Modifier.padding(16.dp).statusBarsPadding().size(40.dp).background(AntSurface2, CircleShape).border(1.dp, AntGlassBorder, CircleShape).align(Alignment.TopStart)) {
-            Icon(Icons.Default.ArrowBack, null, tint = AntText, modifier = Modifier.size(20.dp))
+        // 🟢 EXPANDING TOP BAR (Custom Playlists)
+        Row(
+            modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack, modifier = Modifier.size(40.dp).background(AntSurface2, CircleShape).border(1.dp, AntGlassBorder, CircleShape)) {
+                Icon(Icons.Default.ArrowBack, null, tint = AntText, modifier = Modifier.size(20.dp))
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            AnimatedVisibility(visible = isSearchActive, modifier = Modifier.weight(1f)) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Search playlist...", color = AntText3, style = MaterialTheme.typography.labelMedium) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = accent, unfocusedBorderColor = AntGlassBorder,
+                        focusedTextColor = AntText, unfocusedTextColor = AntText,
+                        focusedContainerColor = AntSurface1, unfocusedContainerColor = AntSurface1
+                    ),
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.height(50.dp)
+                )
+            }
+
+            if (!isSearchActive) Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.width(12.dp))
+
+            IconButton(onClick = {
+                isSearchActive = !isSearchActive
+                if (!isSearchActive) searchQuery = ""
+            }, modifier = Modifier.size(40.dp).background(AntSurface2, CircleShape).border(1.dp, AntGlassBorder, CircleShape)) {
+                Icon(if (isSearchActive) Icons.Default.Close else Icons.Default.Search, null, tint = AntText, modifier = Modifier.size(20.dp))
+            }
         }
     }
 }

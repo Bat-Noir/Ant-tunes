@@ -197,6 +197,12 @@ object PlayerManager {
 
             player?.addListener(object : Player.Listener {
 
+                // 🟢 THE WIRETAP: Catches silent ExoPlayer blocks (like 403 Forbidden)
+                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                    android.util.Log.e("ANT_DEBUG_PLAYER", "❌ ExoPlayer Error: ${error.errorCodeName} - ${error.message}", error)
+                }
+
+
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     _isPlaying.value = isPlaying
 
@@ -565,12 +571,30 @@ object PlayerManager {
                 async {
                     var url = PlaybackRepository.getFreshStreamUrl(context, song) ?: song.streamUrl
 
-                    // 🟢 THE STEALTH INTERCEPTOR
                     if (url == "ghost_track") {
                         url = resolveGhostTrack(song.title, song.artist)
                     }
 
-                    // 🟢 FETCH RAW 4K ARTWORK
+                    // 🟢 THE CRASH-PROOF NEWPIPE EXTRACTOR FOR LISTS
+                    if (song.resolvedSourceType() == SourceType.YOUTUBE || song.source == "youtube") {
+                        try {
+                            val targetUrl = if (song.permanentUrl.isNotBlank() && song.permanentUrl.startsWith("http")) {
+                                song.permanentUrl
+                            } else if (song.streamUrl.isNotBlank() && song.streamUrl.startsWith("http")) {
+                                song.streamUrl
+                            } else if (song.videoId.isNotBlank()) {
+                                "https://www.youtube.com/watch?v=${song.videoId}"
+                            } else {
+                                "https://www.youtube.com/results?search_query=${song.title}+${song.artist}"
+                            }
+
+                            val rawAudio = com.ant.tunes.NewPipeHelper.getAudioUrl(targetUrl)
+                            if (rawAudio != null) {
+                                url = rawAudio
+                            }
+                        } catch (e: Exception) { e.printStackTrace() }
+                    }
+
                     val rawArt = fetchAndCropArtwork(context, song.albumArt)
                     Triple(i, url, rawArt)
                 }
@@ -714,6 +738,38 @@ object PlayerManager {
                 url = resolveGhostTrack(song.title, song.artist)
             }
 
+            // 🟢 THE CRASH-PROOF NEWPIPE EXTRACTOR
+            if (song.resolvedSourceType() == SourceType.YOUTUBE || song.source == "youtube") {
+                try {
+                    // Try permanentUrl first (v=ID format), fallback to streamUrl, fallback to URL search
+                    val targetUrl = if (song.permanentUrl.isNotBlank() && song.permanentUrl.startsWith("http")) {
+                        song.permanentUrl
+                    } else if (song.streamUrl.isNotBlank() && song.streamUrl.startsWith("http")) {
+                        song.streamUrl
+                    } else if (song.videoId.isNotBlank()) {
+                        "https://www.youtube.com/watch?v=${song.videoId}"
+                    } else {
+                        "https://www.youtube.com/results?search_query=${song.title}+${song.artist}"
+                    }
+
+                    val rawAudio = com.ant.tunes.NewPipeHelper.getAudioUrl(targetUrl)
+                    if (rawAudio != null) {
+                        url = rawAudio
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(context, "Stream unavailable. Skipping.", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        return@launch // Abort playback cleanly!
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(context, "Extraction error. Skipping.", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch // Abort playback cleanly!
+                }
+            }
+
             // 🟢 FETCH RAW 4K ARTWORK
             val rawArtBytes = fetchAndCropArtwork(context, song.albumArt)
 
@@ -727,7 +783,6 @@ object PlayerManager {
                     _isOfflineMode.value = false
                 }
 
-                // 🟢 INJECT METADATA
                 val metadata = androidx.media3.common.MediaMetadata.Builder()
                     .setTitle(song.title)
                     .setArtist(song.artist)
@@ -736,7 +791,7 @@ object PlayerManager {
                         if (rawArtBytes != null) {
                             setArtworkData(rawArtBytes, androidx.media3.common.MediaMetadata.PICTURE_TYPE_FRONT_COVER)
                         } else {
-                            setArtworkUri(android.net.Uri.parse(song.albumArt)) // Fallback
+                            setArtworkUri(android.net.Uri.parse(song.albumArt))
                         }
                     }
                     .build()
@@ -746,12 +801,12 @@ object PlayerManager {
                         .setUri(url)
                         .setCustomCacheKey(song.id)
                         .setMimeType("application/x-mpegURL")
-                        .setMediaMetadata(metadata) // Inject!
+                        .setMediaMetadata(metadata)
                         .build()
                     else -> MediaItem.Builder()
                         .setUri(url)
                         .setCustomCacheKey(song.id)
-                        .setMediaMetadata(metadata) // Inject!
+                        .setMediaMetadata(metadata)
                         .build()
                 }
 

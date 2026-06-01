@@ -109,6 +109,7 @@ fun HomeScreen(
     val duration by PlayerManager.duration.collectAsState()
     val progress = if (duration > 0) position.toFloat() / duration else 0f
     val downloadedSongs by PlayerManager.downloadedSongs.collectAsState()
+    val isYtLoggedIn by com.ant.tunes.ytmusic.YoutubeAuthManager.isLoggedIn.collectAsState()
 
     // PREFS
     val prefs = context.getSharedPreferences("ant_prefs", Context.MODE_PRIVATE)
@@ -332,6 +333,68 @@ fun HomeScreen(
                     }
                 }
 
+                // ── SMART CACHE ALBUM ──
+                val cachedSongs = recentSongs.filter { s -> CacheManager.isCached(context, s.id) }
+                if (cachedSongs.isNotEmpty()) {
+                    item {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text("SMART CACHE", style = MaterialTheme.typography.labelLarge, color = AntText3)
+                                Text("${cachedSongs.size} TRACKS", style = MaterialTheme.typography.labelSmall, color = accent)
+                            }
+                            Spacer(Modifier.height(12.dp))
+
+                            Box(
+                                // 🟢 FIXED: Dark background with intense glassy border only
+                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
+                                    .background(AntSurface1) // Reverted to dark surface
+                                    .border(0.5.dp, shinyGlassOutline, RoundedCornerShape(20.dp))
+                                    .clickable { onShowCacheChange(true) }.padding(16.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(modifier = Modifier.size(64.dp).clip(RoundedCornerShape(12.dp))) {
+                                        if (cachedSongs.size >= 4) {
+                                            Column {
+                                                Row {
+                                                    AsyncImage(model = cachedSongs[0].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
+                                                    AsyncImage(model = cachedSongs[1].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
+                                                }
+                                                Row {
+                                                    AsyncImage(model = cachedSongs[2].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
+                                                    AsyncImage(model = cachedSongs[3].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
+                                                }
+                                            }
+                                        } else {
+                                            AsyncImage(model = cachedSongs[0].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                        }
+                                    }
+                                    Spacer(Modifier.width(14.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text("Smart Cache", style = MaterialTheme.typography.titleSmall, color = AntText)
+                                        Text("${cachedSongs.size} songs • auto-cached", style = MaterialTheme.typography.labelMedium, color = AntText2)
+                                    }
+                                    Icon(Icons.Default.PlayArrow, "Play Cache", tint = accent, modifier = Modifier.size(40.dp).background(accent.copy(alpha = 0.15f), CircleShape).padding(8.dp))
+                                }
+                            }
+                            Spacer(Modifier.height(32.dp))
+                        }
+                    }
+                }
+
+                // 🟢 INJECTED DASHBOARD (This now checks vm.isDashboardLoaded internally)
+                if (isYtLoggedIn) {
+                    item {
+                        com.ant.tunes.ui.YtMusicDashboardSection(
+                            vm = vm,
+                            onAlbumClick = { album ->
+                                // Trigger the same logic as your other library cards
+                                selectedAlbum = album
+                                vm.loadAlbumById(album.id)
+                            }
+                        )
+                    }
+                }
+
                 // ── JUMP BACK IN GRID ──
                 if (globalSavedAlbums.isNotEmpty() || globalFollowedArtists.isNotEmpty()) {
                     item {
@@ -444,54 +507,6 @@ fun HomeScreen(
                                 }
                             }
                             Spacer(modifier = Modifier.height(32.dp))
-                        }
-                    }
-                }
-
-                // ── SMART CACHE ALBUM ──
-                val cachedSongs = recentSongs.filter { s -> CacheManager.isCached(context, s.id) }
-                if (cachedSongs.isNotEmpty()) {
-                    item {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Text("SMART CACHE", style = MaterialTheme.typography.labelLarge, color = AntText3)
-                                Text("${cachedSongs.size} TRACKS", style = MaterialTheme.typography.labelSmall, color = accent)
-                            }
-                            Spacer(Modifier.height(12.dp))
-
-                            Box(
-                                // 🟢 FIXED: Dark background with intense glassy border only
-                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
-                                    .background(AntSurface1) // Reverted to dark surface
-                                    .border(0.5.dp, shinyGlassOutline, RoundedCornerShape(20.dp))
-                                    .clickable { onShowCacheChange(true) }.padding(16.dp)
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Box(modifier = Modifier.size(64.dp).clip(RoundedCornerShape(12.dp))) {
-                                        if (cachedSongs.size >= 4) {
-                                            Column {
-                                                Row {
-                                                    AsyncImage(model = cachedSongs[0].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
-                                                    AsyncImage(model = cachedSongs[1].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
-                                                }
-                                                Row {
-                                                    AsyncImage(model = cachedSongs[2].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
-                                                    AsyncImage(model = cachedSongs[3].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp))
-                                                }
-                                            }
-                                        } else {
-                                            AsyncImage(model = cachedSongs[0].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                                        }
-                                    }
-                                    Spacer(Modifier.width(14.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        Text("Smart Cache", style = MaterialTheme.typography.titleSmall, color = AntText)
-                                        Text("${cachedSongs.size} songs • auto-cached", style = MaterialTheme.typography.labelMedium, color = AntText2)
-                                    }
-                                    Icon(Icons.Default.PlayArrow, "Play Cache", tint = accent, modifier = Modifier.size(40.dp).background(accent.copy(alpha = 0.15f), CircleShape).padding(8.dp))
-                                }
-                            }
-                            Spacer(Modifier.height(32.dp))
                         }
                     }
                 }

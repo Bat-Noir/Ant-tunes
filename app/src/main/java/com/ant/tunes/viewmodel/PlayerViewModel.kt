@@ -1,6 +1,7 @@
 package com.ant.tunes.viewmodel
 
 import android.app.Application
+import android.content.Context
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -13,6 +14,7 @@ import com.ant.tunes.lastfm.LastFmRepository
 import com.ant.tunes.network.RetrofitClient
 import com.ant.tunes.player.PlayerManager
 import com.ant.tunes.ui.globalFollowedArtists
+import com.ant.tunes.ytmusic.YoutubeSyncEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -49,6 +51,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     val albumTracks: List<Song> get() = _albumTracks
     val isAlbumLoading = mutableStateOf(false)
     val isPlayerExpanded = mutableStateOf(false)
+    // 🟢 Add these properties to your ViewModel
+    val dashboardCarousels = mutableStateOf<List<com.ant.tunes.ytmusic.YtmHomeShelf>>(emptyList())
+    var isDashboardLoaded = false
+
 
     // 🟢 NEW: LYRICS STATES
     val currentLyrics = mutableStateOf<String?>(null)
@@ -63,6 +69,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     val lastFmTopTracks = MutableStateFlow<List<Song>>(emptyList())
     val lastFmRecentTracks = MutableStateFlow<List<Song>>(emptyList())
     val isLastFmConnected = MutableStateFlow(false)
+    // 🟢 1. ADD THIS AT THE TOP OF YOUR PLAYERVIEWMODEL
+    val albumError = mutableStateOf<String?>(null)
 
     // 🟢 Suggested Albums State
     val recommendedAlbums = MutableStateFlow<List<com.ant.tunes.ui.BrowseCard>>(emptyList())
@@ -129,6 +137,23 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: Exception) {
                 e.printStackTrace()
             }
+        }
+    }
+
+    fun checkVersion(context: Context): Boolean {
+        return try {
+            // Use !! to force non-null, and catch the exception if it fails
+            val pInfo = context.packageManager.getPackageInfo(context.packageName!!, 0)
+
+            // Handle versionName as a nullable string safely
+            val currentVersion = pInfo.versionName ?: "0.0"
+
+            // 🟢 ADD YOUR GITHUB VERSION COMPARISON LOGIC HERE
+            // Example: return "v6.1" > currentVersion
+            false
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
         }
     }
 
@@ -336,43 +361,48 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun rebuildCombinedResults() {
-        _combinedResults.clear()
-        val max = maxOf(_results.size, _gaanaResults.size, _youtubeResults.size)
-        for (i in 0 until max) {
-            if (i < _results.size) _combinedResults.add(_results[i])
-            if (i < _gaanaResults.size) _combinedResults.add(_gaanaResults[i])
-            if (i < _youtubeResults.size) _combinedResults.add(_youtubeResults[i])
-        }
-    }
-
     // ═══════════════════════════════════════
     // 🟢 MASTER SEARCH SYNC LOGIC
     // ═══════════════════════════════════════
 
+    private fun rebuildCombinedResults() {
+        _combinedResults.clear()
+        val temp = mutableListOf<Song>()
+        val max = maxOf(_results.size, _gaanaResults.size, _youtubeResults.size)
+        for (i in 0 until max) {
+            if (i < _results.size) temp.add(_results[i])
+            if (i < _gaanaResults.size) temp.add(_gaanaResults[i])
+            if (i < _youtubeResults.size) temp.add(_youtubeResults[i])
+        }
+
+        // 🟢 CRITICAL UI FIX: Deduplicate! Compose LazyColumn will instantly crash if two items have the same ID.
+        _combinedResults.addAll(temp.distinctBy { it.id })
+    }
+
     fun searchSongs(query: String) {
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
-            _isSearching.value = true // Master loading state ON
+            try { // 🟢 CRITICAL: Wrap the entire concurrent operation so nothing escapes!
+                _isSearching.value = true // Master loading state ON
 
-            searchPage = 1
-            searchHasMore = true
-            _results.clear()
-            _gaanaResults.clear()
-            _youtubeResults.clear()
-            _combinedResults.clear()
+                searchPage = 1
+                searchHasMore = true
+                _results.clear()
+                _gaanaResults.clear()
+                _youtubeResults.clear()
+                _combinedResults.clear()
 
-            // Run all 3 concurrent fetches
-            val saavnJob = async { fetchSaavnPage(query) }
-            val gaanaJob = async { fetchGaana(query) }
-            val ytJob = async { fetchYouTube(query) }
+                val saavnJob = async { fetchSaavnPage(query) }
+                val gaanaJob = async { fetchGaana(query) }
+                val ytJob = async { fetchYouTube(query) }
 
-            // Wait for all to finish
-            awaitAll(saavnJob, gaanaJob, ytJob)
-
-            rebuildCombinedResults()
-
-            _isSearching.value = false // Master loading state OFF
+                awaitAll(saavnJob, gaanaJob, ytJob)
+                rebuildCombinedResults()
+            } catch (t: Throwable) {
+                t.printStackTrace()
+            } finally {
+                _isSearching.value = false // Master loading state OFF
+            }
         }
     }
 
@@ -538,31 +568,28 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             val results = NewPipeHelper.search(query)
             val mappedSongs = kotlinx.coroutines.coroutineScope {
                 results.map { song ->
-                    async {
+                    async(Dispatchers.IO) {
                         try {
-                            val audioUrl = NewPipeHelper.getAudioUrl(song.streamUrl) ?: return@async null
-
-                            // 🟢 THE iTUNES UPGRADE FOR YOUTUBE
                             val itunes = fetchiTunesData(song.title, song.artist)
-
                             song.copy(
-                                streamUrl = audioUrl,
                                 source = "youtube",
-                                albumArt = itunes?.first ?: song.albumArt, // HD Cover injected!
-                                album = itunes?.second ?: song.album       // Real album injected!
+                                albumArt = itunes?.first ?: song.albumArt,
+                                album = itunes?.second ?: song.album
                             )
-                        } catch (e: Exception) {
-                            null
+                        } catch (t: Throwable) {
+                            song // Fallback gracefully
                         }
                     }
-                }.awaitAll().filterNotNull()
+                }.awaitAll()
             }
-            _youtubeResults.addAll(mappedSongs)
-        } catch (e: Exception) {
-            e.printStackTrace()
+            withContext(Dispatchers.Main) {
+                // 🟢 PRE-DEDUPLICATE YouTube results before they even hit the combined list
+                _youtubeResults.addAll(mappedSongs.distinctBy { it.id })
+            }
+        } catch (t: Throwable) {
+            t.printStackTrace()
         }
     }
-
 
     // Upgraded infinite pagination that doesn't break the UI
     fun loadMore(query: String) {
@@ -950,12 +977,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun loadAlbumById(albumId: String) {
+    // In PlayerViewModel.kt
+    fun loadAlbumById(albumId: String, albumTitle: String = "") { // 🟢 Must include albumTitle here!
         viewModelScope.launch {
             try {
                 isAlbumLoading.value = true
                 _albumTracks.clear()
 
+                // 1. HANDLE ITUNES ALBUMS
                 if (albumId.startsWith("itunes_album_")) {
                     val realId = albumId.replace("itunes_album_", "")
                     withContext(Dispatchers.IO) {
@@ -967,45 +996,67 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                 val ghostTracks = mutableListOf<Song>()
                                 for (i in 0 until results.length()) {
                                     val item = results.getJSONObject(i)
-                                    val trackName = item.optString("trackName")
-
-                                    // 🟢 FILTER BY TRACK AND KILL JUNK
-                                    if (item.optString("wrapperType") == "track" && !isJunkText(trackName)) {
-                                        ghostTracks.add(
-                                            Song(
-                                                id = "itunes_${item.optLong("trackId")}",
-                                                title = trackName,
-                                                artist = item.optString("artistName"),
-                                                albumArt = item.optString("artworkUrl100", "").replace("100x100bb.jpg", "1000x1000bb.jpg"),
-                                                streamUrl = "ghost_track",
-                                                album = item.optString("collectionName"),
-                                                source = "youtube"
+                                    if (item.optString("wrapperType") == "track" && !isJunkText(item.optString("trackName"))) {
+                                        val videoId = YoutubeSyncEngine.searchVideoIdForTrack("${item.optString("trackName")} ${item.optString("artistName")}")
+                                        if (videoId != null) {
+                                            ghostTracks.add(
+                                                Song(
+                                                    id = videoId,
+                                                    videoId = videoId,
+                                                    title = item.optString("trackName"),
+                                                    artist = item.optString("artistName"),
+                                                    albumArt = item.optString("artworkUrl100", "").replace("100x100bb.jpg", "1000x1000bb.jpg"),
+                                                    streamUrl = "https://www.youtube.com/watch?v=$videoId",
+                                                    album = item.optString("collectionName"),
+                                                    source = "youtube",
+                                                    sourceType = com.ant.tunes.data.SourceType.YOUTUBE
+                                                )
                                             )
-                                        )
+                                        }
                                     }
                                 }
                                 withContext(Dispatchers.Main) { _albumTracks.addAll(ghostTracks) }
                             }
                         }
                     }
-                    return@launch
                 }
-
-                // Saavn Fallback
-                val response = RetrofitClient.api.getAlbumDetails(id = albumId)
-                if (response.isSuccessful) {
-                    val apiSongs = response.body()?.data?.songs ?: emptyList()
-                    val newSongs = apiSongs.mapNotNull {
-                        val url = it.downloadUrl.lastOrNull()?.url ?: return@mapNotNull null
-                        Song(
-                            id = it.id, title = it.name, artist = it.artists.primary.firstOrNull()?.name ?: "Unknown",
-                            albumArt = it.image.lastOrNull()?.url ?: "", streamUrl = url, album = it.album?.name ?: "", source = "saavn"
-                        )
+                // 2. HANDLE YOUTUBE ALBUMS/MIXES
+                else if (!albumId.startsWith("saavn_")) {
+                    val ytTracks = YoutubeSyncEngine.fetchTracksFromPlaylist(albumId)
+                    if (ytTracks.isNotEmpty()) {
+                        withContext(Dispatchers.Main) {
+                            _albumTracks.addAll(ytTracks)
+                        }
+                    } else {
+                        // Log the error instead of crashing with Context/Toast
+                        android.util.Log.e("PlayerViewModel", "Failed to fetch tracks for: $albumId")
                     }
-                    _albumTracks.addAll(newSongs)
                 }
-            } catch (e: Exception) { e.printStackTrace() }
-            finally { isAlbumLoading.value = false }
+                // 3. HANDLE SAAVN FALLBACK
+                else {
+                    val response = RetrofitClient.api.getAlbumDetails(id = albumId)
+                    if (response.isSuccessful) {
+                        val apiSongs = response.body()?.data?.songs ?: emptyList()
+                        val newSongs = apiSongs.mapNotNull {
+                            val url = it.downloadUrl.lastOrNull()?.url ?: return@mapNotNull null
+                            Song(
+                                id = it.id,
+                                title = it.name,
+                                artist = it.artists.primary.firstOrNull()?.name ?: "Unknown",
+                                albumArt = it.image.lastOrNull()?.url ?: "",
+                                streamUrl = url,
+                                album = it.album?.name ?: "",
+                                source = "saavn"
+                            )
+                        }
+                        _albumTracks.addAll(newSongs)
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                isAlbumLoading.value = false
+            }
         }
     }
 

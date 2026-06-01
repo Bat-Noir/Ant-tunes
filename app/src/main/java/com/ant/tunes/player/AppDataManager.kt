@@ -115,7 +115,8 @@ object AppDataManager {
     }
 
     // ── SAVED ALBUMS ──
-    fun saveAlbums(context: Context, albums: List<com.ant.tunes.ui.BrowseCard>) {
+    // 🟢 Renamed to match LibraryScreen!
+    fun saveSavedAlbums(context: Context, albums: List<com.ant.tunes.ui.BrowseCard>) {
         val prefs = context.getSharedPreferences("ant_prefs", Context.MODE_PRIVATE)
         val array = org.json.JSONArray()
         albums.forEach { a ->
@@ -145,7 +146,8 @@ object AppDataManager {
     }
 
     // ── FOLLOWED ARTISTS ──
-    fun saveArtists(context: Context, artists: List<com.ant.tunes.ui.BrowseCard>) {
+    // 🟢 Renamed to match LibraryScreen!
+    fun saveFollowedArtists(context: Context, artists: List<com.ant.tunes.ui.BrowseCard>) {
         val prefs = context.getSharedPreferences("ant_prefs", Context.MODE_PRIVATE)
         val array = org.json.JSONArray()
         artists.forEach { a ->

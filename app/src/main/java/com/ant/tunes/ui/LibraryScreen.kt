@@ -31,14 +31,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
-import coil.compose.rememberAsyncImagePainter
 import com.ant.tunes.data.Song
 import com.ant.tunes.player.PlayerManager
 import com.ant.tunes.ui.theme.*
-import java.util.UUID
 import kotlinx.coroutines.launch
 
 // ═══════════════════════════════════════
@@ -46,6 +44,7 @@ import kotlinx.coroutines.launch
 // ═══════════════════════════════════════
 class PlaylistData(val id: String, var name: MutableState<String>) {
     val tracks = mutableStateListOf<Song>()
+    var customCoverUri = androidx.compose.runtime.mutableStateOf<String?>(null) // 🟢 NEW: Stores custom photo
 }
 
 val globalPlaylists = mutableStateListOf<PlaylistData>()
@@ -198,6 +197,18 @@ fun LibraryMain(onNavigate: (String, String?) -> Unit, onOpenAlbum: (BrowseCard)
     var showRenameDialog by remember { mutableStateOf<PlaylistData?>(null) }
     var playlistInputName by remember { mutableStateOf("") }
     var showImportSheet by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+    // 🟢 NEW: Photo Picker for custom playlist covers
+    var playlistToUpdateCover by remember { mutableStateOf<PlaylistData?>(null) }
+    val coverPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let {
+            playlistToUpdateCover?.customCoverUri?.value = it.toString()
+            com.ant.tunes.player.AppDataManager.savePlaylists(context, globalPlaylists)
+        }
+    }
+
 
     // ── DIALOGS ──
     if (showCreateDialog) {
@@ -355,9 +366,76 @@ fun LibraryMain(onNavigate: (String, String?) -> Unit, onOpenAlbum: (BrowseCard)
         // 🟢 PLAYLISTS SECTION
         if (selectedChip == "All" || selectedChip == "Playlists") {
             item {
-                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text("YOUR PLAYLISTS", style = MaterialTheme.typography.labelLarge, color = AntText3)
-                    TextButton(onClick = { showImportSheet = true }) { Text("IMPORT", style = MaterialTheme.typography.labelSmall, color = accent) }
+
+                    TextButton(
+                        onClick = {
+                            if (com.ant.tunes.ytmusic.YoutubeAuthManager.isLoggedIn.value) {
+                                coroutineScope.launch {
+                                    android.widget.Toast.makeText(context, "Deep Syncing Library... This may take a minute.", android.widget.Toast.LENGTH_LONG).show()
+
+                                    // 1. 🟢 SYNC LIKED SONGS (Using the new universal track ripper with ID "LM")
+                                    val ytLiked = com.ant.tunes.ytmusic.YoutubeSyncEngine.fetchTracksFromPlaylist("LM")
+                                    if (ytLiked.isNotEmpty()) {
+                                        val unique = ytLiked.filter { ytSong -> globalLikedSongs.none { it.id == ytSong.id } }
+                                        globalLikedSongs.addAll(unique)
+                                        com.ant.tunes.player.AppDataManager.saveLikedSongs(context, globalLikedSongs.toList())
+                                    }
+
+                                    // 2. 🟢 SYNC ALBUMS
+                                    val ytAlbums = com.ant.tunes.ytmusic.YoutubeSyncEngine.fetchLibraryItems("albums")
+                                    if (ytAlbums.isNotEmpty()) {
+                                        val uniqueAlbums = ytAlbums.filter { ytAlbum -> globalSavedAlbums.none { it.id == ytAlbum.id } }
+                                        globalSavedAlbums.addAll(uniqueAlbums)
+                                        try { com.ant.tunes.player.AppDataManager.saveSavedAlbums(context, globalSavedAlbums.toList()) } catch (e: Exception) {}
+                                    }
+
+                                    // 3. 🟢 SYNC ARTISTS
+                                    val ytArtists = com.ant.tunes.ytmusic.YoutubeSyncEngine.fetchLibraryItems("artists")
+                                    if (ytArtists.isNotEmpty()) {
+                                        val uniqueArtists = ytArtists.filter { ytArtist -> globalFollowedArtists.none { it.id == ytArtist.id } }
+                                        globalFollowedArtists.addAll(uniqueArtists)
+                                        try { com.ant.tunes.player.AppDataManager.saveFollowedArtists(context, globalFollowedArtists.toList()) } catch (e: Exception) {}
+                                    }
+
+                                    // 4. 🟢 SYNC PLAYLISTS & THEIR TRACKS!
+                                    val ytPlaylists = com.ant.tunes.ytmusic.YoutubeSyncEngine.fetchLibraryItems("playlists")
+                                    if (ytPlaylists.isNotEmpty()) {
+                                        ytPlaylists.forEach { p ->
+                                            // 🔥 WE NOW ACTUALLY FETCH THE TRACKS INSIDE THE PLAYLIST!
+                                            val tracks = com.ant.tunes.ytmusic.YoutubeSyncEngine.fetchTracksFromPlaylist(p.id)
+
+                                            val existing = globalPlaylists.find { it.name.value == p.title }
+                                            if (existing == null) {
+                                                val newPlaylist = PlaylistData(java.util.UUID.randomUUID().toString(), androidx.compose.runtime.mutableStateOf(p.title))
+                                                newPlaylist.tracks.addAll(tracks)
+                                                globalPlaylists.add(newPlaylist)
+                                            } else {
+                                                val newTracks = tracks.filter { ytSong -> existing.tracks.none { it.id == ytSong.id } }
+                                                existing.tracks.addAll(newTracks)
+                                            }
+                                        }
+                                        com.ant.tunes.player.AppDataManager.savePlaylists(context, globalPlaylists)
+                                    }
+
+                                    android.widget.Toast.makeText(context, "Deep Sync Complete! Fetched ${ytLiked.size} Liked Songs.", android.widget.Toast.LENGTH_LONG).show()
+                                }
+                            } else {
+                                android.widget.Toast.makeText(context, "Connect YouTube Music in Profile first!", android.widget.Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    ) {
+                        Text(
+                            "SYNC YTM",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = accent
+                        )
+                    }
                 }
 
                 Row(
@@ -373,12 +451,40 @@ fun LibraryMain(onNavigate: (String, String?) -> Unit, onOpenAlbum: (BrowseCard)
 
             items(globalPlaylists) { playlist ->
                 var showMenu by remember { mutableStateOf(false) }
+                val customCover = playlist.customCoverUri.value
+                val tracks = playlist.tracks
 
                 Row(
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable { onNavigate("PlaylistDetail", playlist.id) }.padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(modifier = Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)).background(AntSurface2), contentAlignment = Alignment.Center) { Icon(Icons.Default.QueueMusic, null, tint = AntText2) }
+                    // 🟢 THE DYNAMIC 2x2 GRID LOGIC
+                    Box(modifier = Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)).background(AntSurface2), contentAlignment = Alignment.Center) {
+                        when {
+                            customCover != null -> {
+                                coil.compose.AsyncImage(model = customCover, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                            }
+                            tracks.size >= 4 -> {
+                                Column(modifier = Modifier.fillMaxSize()) {
+                                    Row(modifier = Modifier.weight(1f)) {
+                                        coil.compose.AsyncImage(model = tracks[0].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.weight(1f).fillMaxHeight())
+                                        coil.compose.AsyncImage(model = tracks[1].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.weight(1f).fillMaxHeight())
+                                    }
+                                    Row(modifier = Modifier.weight(1f)) {
+                                        coil.compose.AsyncImage(model = tracks[2].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.weight(1f).fillMaxHeight())
+                                        coil.compose.AsyncImage(model = tracks[3].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.weight(1f).fillMaxHeight())
+                                    }
+                                }
+                            }
+                            tracks.isNotEmpty() -> {
+                                coil.compose.AsyncImage(model = tracks[0].albumArt, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                            }
+                            else -> {
+                                Icon(Icons.Default.QueueMusic, null, tint = AntText2)
+                            }
+                        }
+                    }
+
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
                         Text(playlist.name.value, style = MaterialTheme.typography.titleSmall, color = AntText, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -387,13 +493,16 @@ fun LibraryMain(onNavigate: (String, String?) -> Unit, onOpenAlbum: (BrowseCard)
                     Box {
                         IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.MoreVert, null, tint = AntText2) }
                         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }, modifier = Modifier.background(Color(0xFF1E1E1E))) {
-                            DropdownMenuItem(text = { Text("Rename", color = Color.White) }, onClick = { showMenu = false; playlistInputName = playlist.name.value; showRenameDialog = playlist })
+                            // 🟢 NEW: Change Cover Option
+                            DropdownMenuItem(text = { Text("Change Cover", color = accent) }, onClick = { showMenu = false; playlistToUpdateCover = playlist; coverPickerLauncher.launch("image/*") })
+                            DropdownMenuItem(text = { Text("Rename", color = accent) }, onClick = { showMenu = false; playlistInputName = playlist.name.value; showRenameDialog = playlist })
                             DropdownMenuItem(text = { Text("Delete", color = Color(0xFFFF4444)) }, onClick = { showMenu = false; globalPlaylists.remove(playlist); com.ant.tunes.player.AppDataManager.savePlaylists(context, globalPlaylists) })
                         }
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
             }
+
             item { Spacer(modifier = Modifier.height(24.dp)) }
         }
 

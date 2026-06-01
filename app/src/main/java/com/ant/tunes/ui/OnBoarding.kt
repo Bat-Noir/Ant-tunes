@@ -1,42 +1,16 @@
 package com.ant.tunes.ui
 
-import androidx.compose.animation.core.EaseInOutSine
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
+import android.annotation.SuppressLint
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -47,262 +21,104 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import com.ant.tunes.ui.theme.AntBlack
-import com.ant.tunes.ui.theme.AntBlobRed
-import com.ant.tunes.ui.theme.AntGlassBorder
-import com.ant.tunes.ui.theme.AntGlassBorderHot
-import com.ant.tunes.ui.theme.AntSurface1
-import com.ant.tunes.ui.theme.AntText
-import com.ant.tunes.ui.theme.AntText2
-import com.ant.tunes.ui.theme.AntText3
-import com.ant.tunes.ui.theme.LocalAccentColor
+import com.ant.tunes.ui.theme.*
 
+@SuppressLint("UseOfNonLambdaOffsetOverload")
 @Composable
 fun OnboardingScreen(onFinish: (String) -> Unit) {
-    var step by remember { mutableStateOf(0) }
+    var step by remember { mutableIntStateOf(0) }
     var name by remember { mutableStateOf("") }
     val focusManager = LocalFocusManager.current
-
-    // 🟢 Grab the dynamic accent color
     val accent = LocalAccentColor.current
 
-    val dotAlpha by rememberInfiniteTransition(label = "dot")
-        .animateFloat(
-            initialValue = 1f, targetValue = 0.3f,
-            animationSpec = infiniteRepeatable(tween(1000), RepeatMode.Reverse),
-            label = "da"
-        )
-    val blob1Y by rememberInfiniteTransition(label = "b1")
-        .animateFloat(
-            initialValue = -100f, targetValue = -70f,
-            animationSpec = infiniteRepeatable(
-                tween(12000, easing = EaseInOutSine), RepeatMode.Reverse
-            ), label = "b1y"
-        )
+    // Animations
+    val dotAlpha by rememberInfiniteTransition(label = "dot").animateFloat(
+        initialValue = 1f, targetValue = 0.3f,
+        animationSpec = infiniteRepeatable(tween(1000), RepeatMode.Reverse), label = "da"
+    )
+    val blob1Y by rememberInfiniteTransition(label = "b1").animateFloat(
+        initialValue = -100f, targetValue = -70f,
+        animationSpec = infiniteRepeatable(tween(12000, easing = EaseInOutSine), RepeatMode.Reverse), label = "b1y"
+    )
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(AntBlack)
-    ) {
-        // blobs
-        Box(
-            modifier = Modifier
-                .size(350.dp)
-                .offset((-80).dp, blob1Y.dp)
-                .blur(80.dp)
-                .clip(CircleShape)
-                .background(accent.copy(alpha = 0.12f))
-        )
-        Box(
-            modifier = Modifier
-                .size(280.dp)
-                .offset(250.dp, (-80).dp)
-                .blur(80.dp)
-                .clip(CircleShape)
-                .background(AntBlobRed.copy(alpha = 0.10f))
-        )
+    // Button Logic: Only disable if on the name step and name is empty
+    val isNextEnabled = (step != 3) || name.isNotBlank()
+
+    Box(modifier = Modifier.fillMaxSize().background(AntBlack)) {
+        // Blobs
+        Box(modifier = Modifier.size(350.dp).offset((-80).dp, blob1Y.dp).blur(80.dp).clip(CircleShape).background(accent.copy(alpha = 0.12f)))
+        Box(modifier = Modifier.size(280.dp).offset(250.dp, (-80).dp).blur(80.dp).clip(CircleShape).background(AntBlobRed.copy(alpha = 0.10f)))
 
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding()
-                .padding(horizontal = 28.dp),
+            modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 28.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // ── TOP ──
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 24.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier
-                            .size(8.dp)
-                            .alpha(dotAlpha)
-                            .background(accent, CircleShape)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("ANT TUNES",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = AntText3)
-                }
-                // 🟢 REMOVED: Top right "Skip" button. No escaping!
+            // Header
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(8.dp).alpha(dotAlpha).background(accent, CircleShape))
+                Spacer(Modifier.width(8.dp))
+                Text("ANT TUNES", style = MaterialTheme.typography.labelLarge, color = AntText3)
             }
 
-            // ── CENTER ──
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                // vinyl with step number
-                Box(
-                    modifier = Modifier.size(200.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(200.dp)
-                            .clip(CircleShape)
-                            .background(Brush.radialGradient(listOf(accent.copy(alpha = 0.15f), AntBlack)))
-                            .border(1.dp, AntGlassBorderHot, CircleShape)
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(150.dp)
-                            .clip(CircleShape)
-                            .background(AntSurface1)
-                            .border(1.dp, AntGlassBorder, CircleShape)
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(90.dp)
-                            .clip(CircleShape)
-                            .background(Brush.radialGradient(listOf(accent.copy(alpha = 0.15f), AntBlack))),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("0${step + 1}",
-                            style = MaterialTheme.typography.displayLarge,
-                            color = accent)
+            // Center Content
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                Box(modifier = Modifier.size(200.dp), contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier.size(200.dp).clip(CircleShape).background(Brush.radialGradient(listOf(accent.copy(alpha = 0.15f), AntBlack))).border(1.dp, AntGlassBorderHot, CircleShape))
+                    Box(modifier = Modifier.size(150.dp).clip(CircleShape).background(AntSurface1).border(1.dp, AntGlassBorder, CircleShape))
+                    Box(modifier = Modifier.size(90.dp).clip(CircleShape).background(Brush.radialGradient(listOf(accent.copy(alpha = 0.15f), AntBlack))), contentAlignment = Alignment.Center) {
+                        Text("0${step + 1}", style = MaterialTheme.typography.displayLarge, color = accent)
                     }
-                    Box(Modifier.size(16.dp).background(AntBlack, CircleShape))
                 }
-
                 Spacer(Modifier.height(40.dp))
-
-                // step dots
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     repeat(4) { i ->
-                        Box(
-                            modifier = Modifier
-                                .height(4.dp)
-                                .width(if (i == step) 24.dp else 8.dp)
-                                .clip(RoundedCornerShape(2.dp))
-                                .background(if (i == step) accent else AntGlassBorder)
-                        )
+                        Box(modifier = Modifier.height(4.dp).width(if (i == step) 24.dp else 8.dp).clip(RoundedCornerShape(2.dp)).background(if (i == step) accent else AntGlassBorder))
                     }
                 }
             }
 
-            // ── BOTTOM ──
+            // Bottom Content
             Column(modifier = Modifier.padding(bottom = 32.dp)) {
                 when (step) {
-                    0 -> StepContent(
-                        tag = "THE REBELLION",
-                        title = "Zero Ads.\nZero Limits.",
-                        subtitle = "Tired of paying just to skip a song? We unified YouTube, Gaana, and JioSaavn into one seamless, ad-free engine.",
-                        accent = accent
-                    )
-                    1 -> StepContent(
-                        tag = "PRO CONTROLS",
-                        title = "Built For\nSpeed.",
-                        subtitle = "Swipe left on any searched track to 'Play Next'. Your heavy rotation auto-caches for offline play. Swipe, tap, vibe.",
-                        accent = accent
-                    )
-                    2 -> {
-                        // name input step
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.width(20.dp).height(1.dp).background(accent))
-                            Spacer(Modifier.width(8.dp))
-                            Text("PERSONALIZE",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = accent)
-                        }
-                        Spacer(Modifier.height(12.dp))
-                        Text("Who's\nListening?",
-                            style = MaterialTheme.typography.displayLarge,
-                            color = AntText)
-                        Spacer(Modifier.height(12.dp))
-                        Text("We need a name for your custom profile. No skipping this one—make it yours.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = AntText2)
-                        Spacer(Modifier.height(20.dp))
-
-                        // name input field
-                        OutlinedTextField(
-                            value = name,
-                            onValueChange = { name = it },
-                            placeholder = {
-                                Text("Your name...",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = AntText3)
-                            },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                            keyboardActions = KeyboardActions(onDone = {
-                                focusManager.clearFocus()
-                                if (name.isNotBlank()) step++
-                            }),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = accent,
-                                unfocusedBorderColor = AntGlassBorder,
-                                focusedTextColor = AntText,
-                                unfocusedTextColor = AntText,
-                                cursorColor = accent,
-                                focusedContainerColor = AntSurface1,
-                                unfocusedContainerColor = AntSurface1,
-                            ),
-                            shape = RoundedCornerShape(16.dp),
-                            modifier = Modifier.fillMaxWidth(),
-                            textStyle = MaterialTheme.typography.bodyLarge
-                        )
-                    }
+                    0 -> StepContent("THE REBELLION", "Zero Ads.\nZero Limits.", "Tired of paying just to skip a song? We unified YouTube, Gaana, and JioSaavn into one seamless, ad-free engine.", accent)
+                    1 -> StepContent("PRO CONTROLS", "Built For\nSpeed.", "Swipe left on any searched track to 'Play Next'. Your heavy rotation auto-caches for offline play. Swipe, tap, vibe.", accent)
+                    2 -> StepContent("BRING YOUR DATA", "Built For\nCustomization.", "Get all your data from just logging in via profile. Supported - Last fm, YT Music.", accent)
                     3 -> {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(Modifier.width(20.dp).height(1.dp).background(accent))
                             Spacer(Modifier.width(8.dp))
-                            Text("READY",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = accent)
+                            Text("PERSONALIZE", style = MaterialTheme.typography.labelLarge, color = accent)
                         }
                         Spacer(Modifier.height(12.dp))
-                        Text(
-                            text = "Hey,\n${name.trim()}.",
-                            style = MaterialTheme.typography.displayLarge,
-                            color = AntText
+                        Text("Who's\nListening?", style = MaterialTheme.typography.displayLarge, color = AntText)
+                        Spacer(Modifier.height(20.dp))
+                        OutlinedTextField(
+                            value = name,
+                            onValueChange = { name = it },
+                            placeholder = { Text("Your name...", style = MaterialTheme.typography.bodyLarge, color = AntText3) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = accent, unfocusedBorderColor = AntGlassBorder, focusedTextColor = AntText, unfocusedTextColor = AntText, cursorColor = accent, focusedContainerColor = AntSurface1, unfocusedContainerColor = AntSurface1),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.fillMaxWidth()
                         )
-                        Spacer(Modifier.height(12.dp))
-                        Text("Your global mini-player is primed. Your library is waiting. Let's drop the needle.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = AntText2)
                     }
                 }
 
                 Spacer(Modifier.height(32.dp))
 
-                // 🟢 MAIN BUTTON: Completely disables if on step 2 and name is empty!
-                val isNextEnabled = !(step == 2 && name.isBlank())
-
                 Button(
                     onClick = {
                         focusManager.clearFocus()
-                        if (step < 3) {
-                            step++
-                        } else {
-                            onFinish(name.trim())
-                        }
+                        if (step < 3) step++ else onFinish(name.trim())
                     },
                     modifier = Modifier.fillMaxWidth().height(56.dp),
                     shape = RoundedCornerShape(28.dp),
                     enabled = isNextEnabled,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = accent,
-                        disabledContainerColor = AntSurface1,
-                        disabledContentColor = AntText3
-                    )
+                    colors = ButtonDefaults.buttonColors(containerColor = accent, disabledContainerColor = AntSurface1)
                 ) {
-                    Text(
-                        text = when (step) {
-                            3 -> "START LISTENING"
-                            else -> "NEXT"
-                        },
-                        style = MaterialTheme.typography.labelLarge,
-                        color = if (isNextEnabled) Color.White else AntText3
-                    )
+                    Text(if (step == 3) "START LISTENING" else "NEXT", style = MaterialTheme.typography.labelLarge, color = if (isNextEnabled) Color.White else AntText3)
                 }
             }
         }

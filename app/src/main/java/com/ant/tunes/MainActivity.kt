@@ -110,6 +110,22 @@ fun AntTunesApp() {
         ), label = "expand"
     )
 
+    // 🟢 Add this state
+    var showUpdateDialog by remember { mutableStateOf(false) }
+
+    // 🟢 Add this logic right below your other LaunchedEffects
+    LaunchedEffect(Unit) {
+        // Simple delay to let app load first
+        kotlinx.coroutines.delay(2000)
+
+        // PSEUDO-CODE: Implement your actual network call here
+        // val latestVersion = githubApi.getLatestVersion()
+        // if (latestVersion > BuildConfig.VERSION_NAME) { showUpdateDialog = true }
+
+        // For testing, you can uncomment the line below to see it:
+        // showUpdateDialog = true
+    }
+
     // 🟢 ADDED: We need isPlaying for the global MiniPlayer
     val isPlaying by PlayerManager.isPlayingFlow.collectAsState()
 
@@ -151,11 +167,12 @@ fun AntTunesApp() {
             modifier = Modifier.fillMaxSize()
         ) {
             when (currentTab) {
-                NavTab.HOME    -> PlayerScreen(
+                NavTab.HOME -> PlayerScreen(
                     onOpenProfile = { showProfile = true },
                     onOpenSettings = { showSettings = true }
                 )
-                NavTab.SEARCH  -> SearchScreen(vm)
+
+                NavTab.SEARCH -> SearchScreen(vm)
                 NavTab.LIBRARY -> LibraryScreen(vm)
             }
         }
@@ -223,6 +240,10 @@ fun AntTunesApp() {
                     onCollapse = { vm.isPlayerExpanded.value = false }
                 )
             }
-        }
-    } // <-- End of main Box
-} // <-- End of AntTunesApp
+            // 🟢 Place this right before the last closing brace '}' of AntTunesApp
+            if (showUpdateDialog) {
+                com.ant.tunes.ui.components.UpdateDialog(onDismiss = { showUpdateDialog = false })
+            }
+        } // End of main Box
+    } // End of AntTunesApp
+}
